@@ -1,0 +1,16 @@
+services:
+  rag-service:
+    build:
+      context: "./services/RAG Engine"
+    container_name: flashsupport-rag-service
+    env_file:
+      - "./services/RAG Engine/.env.${RAG_ENGINE_ENV:?RAG_ENGINE_ENV is required (dev|prod)}"
+    environment:
+      RAG_ENGINE_ENV: ${RAG_ENGINE_ENV:?RAG_ENGINE_ENV is required (dev|prod)}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

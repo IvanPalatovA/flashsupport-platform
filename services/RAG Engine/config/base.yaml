@@ -1,0 +1,4 @@
+app_name: rag-service
+log_level: INFO
+default_top_k: 3
+vector_dimension: 128
