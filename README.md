@@ -4,22 +4,22 @@
 Команды
 # запустить все сервисы
 <!-- для режима DEV -->
-docker compose --env-file .env.dev -f docker-compose.yml up -d --build
+docker compose --env-file .env.public.dev -f docker-compose.yml up -d --build
 
 <!-- для режима PROD -->
-docker compose --env-file .env.prod -f docker-compose.yml up -d --build
+docker compose --env-file .env.public.prod -f docker-compose.yml up -d --build
 
 # Остановить все сервисы
 <!-- если запущено в режиме DEV -->
-docker compose --env-file .env.dev -f docker-compose.yml down
+docker compose --env-file .env.public.dev -f docker-compose.yml down
 
 <!-- если запущено в режиме PROD -->
-docker compose --env-file .env.prod -f docker-compose.yml down
+docker compose --env-file .env.public.prod -f docker-compose.yml down
 
 # Остановить конкретный сервис
 
 <!-- если запущено в режиме DEV -->
-docker compose --env-file .env.dev -f docker-compose.yml stop rag-service
+docker compose --env-file .env.public.dev -f docker-compose.yml stop rag-service
 
 <!-- если запущено в режиме PROD -->
-docker compose --env-file .env.prod -f docker-compose.yml stop rag-service
+docker compose --env-file .env.public.prod -f docker-compose.yml stop rag-service

@@ -47,13 +47,13 @@ Response:
 Из корня репозитория:
 
 ```bash
-docker compose --env-file .env.dev -f docker-compose.yml up -d --build
+docker compose --env-file .env.public.dev -f docker-compose.yml up -d --build
 ```
 
 Для prod:
 
 ```bash
-docker compose --env-file .env.prod -f docker-compose.yml up -d --build
+docker compose --env-file .env.public.prod -f docker-compose.yml up -d --build
 ```
 
 Проверка сервиса:
@@ -68,7 +68,7 @@ curl http://localhost:8080/health
 {"status":"ok"}
 ```
 
-Важно: достаточно выбрать только `--env-file` (`.env.dev` или `.env.prod`). Из него Compose берёт `RAG_ENGINE_ENV`, подключает `services/RAG Engine/.env.<mode>` и прокидывает `RAG_ENGINE_ENV` в контейнер.
+Важно: достаточно выбрать только `--env-file` (`.env.public.dev` или `.env.public.prod`). Из него Compose берёт `RAG_ENGINE_ENV`, подключает `services/RAG Engine/.env.<mode>` и прокидывает `RAG_ENGINE_ENV` в контейнер.
 
 Swagger: 
 

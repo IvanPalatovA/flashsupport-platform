@@ -5,3 +5,6 @@ __pycache__/
 # Local environment files (never commit)
 .env
 .env.*
+
+# Allow example env files
+!.env.example
