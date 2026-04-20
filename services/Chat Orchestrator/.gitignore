@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local environment files (never commit)
+.env
+.env.*
+
+# Allow example env file
+!.env.example
+!.env.dev
+!.env.prod

@@ -1,4 +1,19 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: flashsupport-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-flashsupport_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-flashsupport_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flashsupport_dev}
+    volumes:
+      - flashsupport-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flashsupport_dev} -d ${POSTGRES_DB:-flashsupport_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   rag-service:
     build:
       context: "./services/RAG Engine"
@@ -7,6 +22,9 @@ services:
       - "./services/RAG Engine/.env.${RAG_ENGINE_ENV:?RAG_ENGINE_ENV is required (dev|prod)}"
     environment:
       RAG_ENGINE_ENV: ${RAG_ENGINE_ENV:?RAG_ENGINE_ENV is required (dev|prod)}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
     healthcheck:
@@ -14,3 +32,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  chat-orchestrator:
+    build:
+      context: "./services/Chat Orchestrator"
+    container_name: flashsupport-chat-orchestrator
+    env_file:
+      - "./services/Chat Orchestrator/.env.${CHAT_ORCHESTRATOR_ENV:?CHAT_ORCHESTRATOR_ENV is required (dev|prod)}"
+    environment:
+      CHAT_ORCHESTRATOR_ENV: ${CHAT_ORCHESTRATOR_ENV:?CHAT_ORCHESTRATOR_ENV is required (dev|prod)}
+    ports:
+      - "8090:8090"
+    depends_on:
+      rag-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  flashsupport-postgres-data:

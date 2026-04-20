@@ -1,0 +1,6 @@
+app_name: chat-orchestrator
+log_level: INFO
+default_top_k: 3
+http_timeout_seconds: 5
+rag_engine_url: http://flashsupport-rag-service:8080
+persistence_api_url: http://flashsupport-storage-api:8091

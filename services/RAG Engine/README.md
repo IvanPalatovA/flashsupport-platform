@@ -70,6 +70,9 @@ curl http://localhost:8080/health
 
 Важно: достаточно выбрать только `--env-file` (`.env.public.dev` или `.env.public.prod`). Из него Compose берёт `RAG_ENGINE_ENV`, подключает `services/RAG Engine/.env.<mode>` и прокидывает `RAG_ENGINE_ENV` в контейнер.
 
+Для `dev` Compose также поднимает локальный PostgreSQL с `pgvector` (`service: postgres`), который использует `rag-service`.
+При необходимости параметры БД можно переопределить через переменные `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` в момент запуска Compose.
+
 Swagger: 
 
 - `http://localhost:8080/docs`
