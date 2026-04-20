@@ -5,6 +5,7 @@ from typing import Any, cast
 import httpx
 
 from domain import ChatStatus, MessageEntity, RAGResultEntity, Role, SpecialistDecision
+from infrastructure.auth_client import AuthClientError, ServiceTokenProvider
 
 
 class UpstreamServiceError(RuntimeError):
@@ -135,41 +136,50 @@ class PersistenceApiRepository:
 
 
 class RagEngineRepository:
-	def __init__(self, base_url: str, timeout_seconds: float) -> None:
+	def __init__(self, base_url: str, timeout_seconds: float, service_token_provider: ServiceTokenProvider) -> None:
 		self._base_url = base_url.rstrip("/")
 		self._timeout_seconds = timeout_seconds
+		self._service_token_provider = service_token_provider
 
-	def search(self, query: str, top_k: int) -> list[RAGResultEntity]:
+	def search(self, query: str, top_k: int, user_token: str) -> list[RAGResultEntity]:
 		url = f"{self._base_url}/search"
 		try:
+			service_token = self._service_token_provider.get_service_access_token()
 			response = httpx.post(
 				url,
 				json={"query": query, "top_k": top_k},
+				headers={
+					"Authorization": f"Bearer {user_token}",
+					"X-Service-Authorization": f"Bearer {service_token}",
+					"X-Service-Name": self._service_token_provider.service_id,
+				},
 				timeout=self._timeout_seconds,
 			)
 			response.raise_for_status()
-		except httpx.HTTPError as error:
+		except (httpx.HTTPError, AuthClientError) as error:
 			raise UpstreamServiceError("RAG Engine request failed: /search") from error
 
 		data = _safe_json_object(response)
-		raw_results = data.get("results")
-		if not isinstance(raw_results, list):
+		raw_results_obj = data.get("results")
+		if not isinstance(raw_results_obj, list):
 			return []
+		raw_results = cast(list[Any], raw_results_obj)
 
 		results: list[RAGResultEntity] = []
 		for raw_item in raw_results:
 			if not isinstance(raw_item, dict):
 				continue
-			if "text" not in raw_item:
+			item = cast(dict[str, Any], raw_item)
+			if "text" not in item:
 				continue
 			results.append(
 				RAGResultEntity(
-					chunk_id=raw_item.get("chunk_id", ""),
-					document_id=raw_item.get("document_id", ""),
-					document_title=str(raw_item.get("document_title", "")),
-					chunk_index=int(raw_item.get("chunk_index", 0)),
-					score=float(raw_item.get("score", 0.0)),
-					text=str(raw_item.get("text", "")),
+					chunk_id=item.get("chunk_id", ""),
+					document_id=item.get("document_id", ""),
+					document_title=str(item.get("document_title", "")),
+					chunk_index=int(item.get("chunk_index", 0)),
+					score=float(item.get("score", 0.0)),
+					text=str(item.get("text", "")),
 				)
 			)
 		return results

@@ -1,0 +1,14 @@
+app_name: auth-service
+log_level: INFO
+token_issuer: flashsupport-auth-service
+user_access_token_audience: flashsupport-services
+service_assertion_audience: auth-service
+user_access_token_ttl_minutes: 15
+user_refresh_token_ttl_days: 15
+service_access_token_ttl_minutes: 15
+bcrypt_rounds: 12
+clock_skew_seconds: 10
+auth_private_key_path: config/keys/auth/private.pem
+auth_public_key_path: config/keys/auth/public.pem
+service_public_keys_dir: config/keys/services
+skip_schema_init: false

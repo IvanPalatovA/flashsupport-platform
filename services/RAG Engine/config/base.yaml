@@ -2,3 +2,7 @@ app_name: rag-service
 log_level: INFO
 default_top_k: 3
 vector_dimension: 128
+auth_public_key_path: config/keys/auth/public.pem
+auth_token_issuer: flashsupport-auth-service
+user_access_token_audience: flashsupport-services
+clock_skew_seconds: 10

@@ -14,6 +14,12 @@ Retrieval-only сервис семантического поиска для Fla
 - `GET /health` -> `{ "status": "ok" }`
 - `POST /search`
 
+`POST /search` требует два JWT-заголовка:
+
+- `Authorization: Bearer <user_access_token>`
+- `X-Service-Authorization: Bearer <service_access_token>`
+- `X-Service-Name: <service_id>`
+
 Request:
 
 ```json
@@ -69,9 +75,6 @@ curl http://localhost:8080/health
 ```
 
 Важно: достаточно выбрать только `--env-file` (`.env.public.dev` или `.env.public.prod`). Из него Compose берёт `RAG_ENGINE_ENV`, подключает `services/RAG Engine/.env.<mode>` и прокидывает `RAG_ENGINE_ENV` в контейнер.
-
-Для `dev` Compose также поднимает локальный PostgreSQL с `pgvector` (`service: postgres`), который использует `rag-service`.
-При необходимости параметры БД можно переопределить через переменные `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` в момент запуска Compose.
 
 Swagger: 
 

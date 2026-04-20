@@ -56,7 +56,7 @@ class PersistencePort(Protocol):
 
 
 class RAGPort(Protocol):
-	def search(self, query: str, top_k: int) -> list[RAGResultEntity]:
+	def search(self, query: str, top_k: int, user_token: str) -> list[RAGResultEntity]:
 		...
 
 
@@ -117,6 +117,7 @@ class ChatOrchestratorService:
 		text: str,
 		request_operator: bool,
 		top_k: int | None,
+		user_access_token: str,
 	) -> UserMessageResultEntity:
 		resolved_chat_id = chat_id or f"chat-{uuid4()}"
 		target_role = Role.operator if request_operator else Role.system
@@ -161,7 +162,7 @@ class ChatOrchestratorService:
 			)
 
 		final_top_k = top_k if top_k is not None else self._settings.default_top_k
-		rag_results = self._rag_engine.search(query=text, top_k=final_top_k)
+		rag_results = self._rag_engine.search(query=text, top_k=final_top_k, user_token=user_access_token)
 		self._persistence.save_event(
 			chat_id=resolved_chat_id,
 			event_type="forwarded_to_rag_engine",

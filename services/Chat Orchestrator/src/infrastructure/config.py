@@ -19,6 +19,17 @@ class Settings(BaseModel):
     persistence_api_url: str
     default_top_k: int = Field(ge=1, le=50)
     http_timeout_seconds: float = Field(gt=0)
+    auth_service_url: str
+    auth_public_key_path: str
+    auth_token_issuer: str
+    user_access_token_audience: str
+    service_id: str
+    service_private_key_path: str
+    service_token_audience: str
+    service_assertion_audience: str
+    service_assertion_ttl_seconds: int = Field(gt=0, le=300)
+    service_token_refresh_skew_seconds: int = Field(ge=0, le=600)
+    clock_skew_seconds: int = Field(ge=0, le=300)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -42,6 +53,13 @@ def _required_env(name: str) -> str:
     if value is None or value.strip() == "":
         raise ValueError(f"Missing required environment variable: {name}")
     return value
+
+
+def _resolve_path(service_root: Path, raw_path: str) -> str:
+    path = Path(raw_path)
+    if path.is_absolute():
+        return str(path)
+    return str((service_root / path).resolve())
 
 
 def _get_from_env_or_yaml(env_name: str, env_value: str | None, data: dict[str, Any], key: str) -> Any:
@@ -69,6 +87,22 @@ def get_settings() -> Settings:
 
     data = _merge(_read_yaml(config_dir / "base.yaml"), _read_yaml(env_config_path))
 
+    auth_public_key_path = _resolve_path(
+        service_root,
+        str(_get_from_env_or_yaml(env_name, os.getenv("AUTH_PUBLIC_KEY_PATH"), data, "auth_public_key_path")),
+    )
+    service_private_key_path = _resolve_path(
+        service_root,
+        str(
+            _get_from_env_or_yaml(
+                env_name,
+                os.getenv("SERVICE_PRIVATE_KEY_PATH"),
+                data,
+                "service_private_key_path",
+            )
+        ),
+    )
+
     env_overrides: dict[str, Any] = {
         "env": env_name,
         "app_name": _get_from_env_or_yaml(env_name, os.getenv("APP_NAME"), data, "app_name"),
@@ -85,6 +119,53 @@ def get_settings() -> Settings:
         "default_top_k": int(_get_from_env_or_yaml(env_name, os.getenv("DEFAULT_TOP_K"), data, "default_top_k")),
         "http_timeout_seconds": float(
             _get_from_env_or_yaml(env_name, os.getenv("HTTP_TIMEOUT_SECONDS"), data, "http_timeout_seconds")
+        ),
+        "auth_service_url": _get_from_env_or_yaml(env_name, os.getenv("AUTH_SERVICE_URL"), data, "auth_service_url"),
+        "auth_public_key_path": auth_public_key_path,
+        "auth_token_issuer": _get_from_env_or_yaml(
+            env_name,
+            os.getenv("AUTH_TOKEN_ISSUER"),
+            data,
+            "auth_token_issuer",
+        ),
+        "user_access_token_audience": _get_from_env_or_yaml(
+            env_name,
+            os.getenv("USER_ACCESS_TOKEN_AUDIENCE"),
+            data,
+            "user_access_token_audience",
+        ),
+        "service_id": _get_from_env_or_yaml(env_name, os.getenv("SERVICE_ID"), data, "service_id"),
+        "service_private_key_path": service_private_key_path,
+        "service_token_audience": _get_from_env_or_yaml(
+            env_name,
+            os.getenv("SERVICE_TOKEN_AUDIENCE"),
+            data,
+            "service_token_audience",
+        ),
+        "service_assertion_audience": _get_from_env_or_yaml(
+            env_name,
+            os.getenv("SERVICE_ASSERTION_AUDIENCE"),
+            data,
+            "service_assertion_audience",
+        ),
+        "service_assertion_ttl_seconds": int(
+            _get_from_env_or_yaml(
+                env_name,
+                os.getenv("SERVICE_ASSERTION_TTL_SECONDS"),
+                data,
+                "service_assertion_ttl_seconds",
+            )
+        ),
+        "service_token_refresh_skew_seconds": int(
+            _get_from_env_or_yaml(
+                env_name,
+                os.getenv("SERVICE_TOKEN_REFRESH_SKEW_SECONDS"),
+                data,
+                "service_token_refresh_skew_seconds",
+            )
+        ),
+        "clock_skew_seconds": int(
+            _get_from_env_or_yaml(env_name, os.getenv("CLOCK_SKEW_SECONDS"), data, "clock_skew_seconds")
         ),
     }
 

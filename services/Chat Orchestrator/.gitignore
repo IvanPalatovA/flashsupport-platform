@@ -8,5 +8,3 @@ __pycache__/
 
 # Allow example env file
 !.env.example
-!.env.dev
-!.env.prod

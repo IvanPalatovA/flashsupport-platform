@@ -5,8 +5,10 @@ Chat Orchestrator is responsible for message control in FlashSupport and works o
 ## Responsibilities
 
 - checks whether one role can send a message to another role;
+- validates `user access JWT` and `service access JWT` for all business endpoints;
 - stores message history and events through external Persistence API (DB is not embedded here);
 - forwards user requests to `RAG Engine`;
+- requests its own service JWT from `Auth Service` via Signed Assertion and refreshes it before expiry;
 - escalates chats to operator queue if user asks for human help;
 - allows operator to reply, close, block, resolve chat, or send request to specialist queue;
 - allows specialist to approve/reject operator request and trigger knowledge-base update request.
@@ -27,6 +29,12 @@ Chat Orchestrator is responsible for message control in FlashSupport and works o
 - `POST /messages/operator` -> operator reply to user.
 - `POST /operator/actions` -> operator action (`close_chat`, `block_chat`, `resolve_chat`, `send_to_specialist_queue`).
 - `POST /specialist/reviews` -> specialist decision (`approve` / `reject`).
+
+All business endpoints (except `GET /health`) require:
+
+- `Authorization: Bearer <user_access_token>`
+- `X-Service-Authorization: Bearer <service_access_token>`
+- `X-Service-Name: <service_id>`
 
 ### Persistence API contract used by this service
 
@@ -51,6 +59,11 @@ Main required variables:
 - `PERSISTENCE_API_URL`
 - `DEFAULT_TOP_K`
 - `HTTP_TIMEOUT_SECONDS`
+- `AUTH_SERVICE_URL`
+- `AUTH_PUBLIC_KEY_PATH`
+- `SERVICE_PRIVATE_KEY_PATH`
+- `SERVICE_ASSERTION_TTL_SECONDS`
+- `SERVICE_TOKEN_REFRESH_SKEW_SECONDS`
 
 Configs are loaded from:
 

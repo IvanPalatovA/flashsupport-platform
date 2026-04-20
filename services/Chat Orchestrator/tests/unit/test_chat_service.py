@@ -70,10 +70,12 @@ class FakePersistence:
 class FakeRagEngine:
     def __init__(self) -> None:
         self.calls: int = 0
+        self.last_user_token: str | None = None
 
-    def search(self, query: str, top_k: int) -> list[RAGResultEntity]:
+    def search(self, query: str, top_k: int, user_token: str) -> list[RAGResultEntity]:
         self.calls += 1
         _ = query
+        self.last_user_token = user_token
         return [
             RAGResultEntity(
                 chunk_id=1,
@@ -102,6 +104,17 @@ def build_service() -> tuple[ChatOrchestratorService, FakePersistence, FakeRagEn
             persistence_api_url="http://localhost:8091",
             default_top_k=3,
             http_timeout_seconds=5,
+            auth_service_url="http://localhost:8070",
+            auth_public_key_path="config/keys/auth/public.pem",
+            auth_token_issuer="flashsupport-auth-service",
+            user_access_token_audience="flashsupport-services",
+            service_id="chat-orchestrator",
+            service_private_key_path="config/keys/services/chat-orchestrator.private.pem",
+            service_token_audience="rag-service",
+            service_assertion_audience="auth-service",
+            service_assertion_ttl_seconds=60,
+            service_token_refresh_skew_seconds=60,
+            clock_skew_seconds=10,
         ),
     )
     return service, persistence, rag_engine
@@ -117,12 +130,14 @@ def test_user_message_goes_to_rag_engine_by_default() -> None:
         text="I cannot reset my password",
         request_operator=False,
         top_k=None,
+        user_access_token="user-token",
     )
 
     assert result.route.value == "rag_engine"
     assert result.chat_status == ChatStatus.open
     assert len(result.rag_results) == 1
     assert rag_engine.calls == 1
+    assert rag_engine.last_user_token == "user-token"
     assert len(persistence.messages) == 1
 
 
@@ -136,6 +151,7 @@ def test_user_message_can_be_escalated_to_operator_queue() -> None:
         text="I need a human operator",
         request_operator=True,
         top_k=5,
+        user_access_token="user-token",
     )
 
     assert result.route.value == "operator_queue"

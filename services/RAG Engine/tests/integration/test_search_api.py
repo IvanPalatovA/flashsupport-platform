@@ -1,8 +1,9 @@
 from fastapi.testclient import TestClient
 
 from domain import SearchResultEntity
+from infrastructure.security import RequestIdentity
 from main import app
-from routers import get_search_service
+from routers import get_search_service, require_request_identity
 
 
 class FakeSearchService:
@@ -24,6 +25,14 @@ class FakeSearchService:
 
 def test_search_endpoint_happy_path() -> None:
     app.dependency_overrides[get_search_service] = lambda: FakeSearchService()
+    app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
+        user_subject="user-1",
+        user_login="user",
+        user_role="registered_user",
+        service_id="chat-orchestrator",
+        user_token="user-token",
+        service_token="service-token",
+    )
     client = TestClient(app)
 
     response = client.post("/search", json={"query": "как сбросить пароль", "top_k": 2})
@@ -39,8 +48,18 @@ def test_search_endpoint_happy_path() -> None:
 
 
 def test_search_endpoint_validation_error() -> None:
+    app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
+        user_subject="user-1",
+        user_login="user",
+        user_role="registered_user",
+        service_id="chat-orchestrator",
+        user_token="user-token",
+        service_token="service-token",
+    )
     client = TestClient(app)
 
     response = client.post("/search", json={"query": "", "top_k": 0})
 
     assert response.status_code == 422
+
+    app.dependency_overrides.clear()

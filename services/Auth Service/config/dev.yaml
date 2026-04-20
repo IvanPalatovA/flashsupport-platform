@@ -1,0 +1,4 @@
+host: 0.0.0.0
+port: 8070
+database_url: postgresql+psycopg://flashsupport_auth:flashsupport_auth@flashsupport-auth-db:5432/flashsupport_auth
+database_encryption_key: dev_flashsupport_auth_key_32_chars_min

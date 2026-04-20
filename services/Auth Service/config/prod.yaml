@@ -1,0 +1,5 @@
+host: 0.0.0.0
+port: 8070
+log_level: INFO
+database_url: postgresql+psycopg://flashsupport_auth:replace_me@auth-db.example.com:5432/flashsupport_auth
+database_encryption_key: replace_me_with_random_32_chars_minimum

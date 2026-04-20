@@ -18,6 +18,10 @@ class Settings(BaseModel):
     database_url: str
     default_top_k: int
     vector_dimension: int = Field(ge=8)
+    auth_public_key_path: str
+    auth_token_issuer: str
+    user_access_token_audience: str
+    clock_skew_seconds: int = Field(ge=0, le=300)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -41,6 +45,13 @@ def _required_env(name: str) -> str:
     if value is None or value.strip() == "":
         raise ValueError(f"Missing required environment variable: {name}")
     return value
+
+
+def _resolve_path(service_root: Path, raw_path: str) -> str:
+    path = Path(raw_path)
+    if path.is_absolute():
+        return str(path)
+    return str((service_root / path).resolve())
 
 
 def _get_from_env_or_yaml(env_name: str, env_value: str | None, data: dict[str, Any], key: str) -> Any:
@@ -68,6 +79,11 @@ def get_settings() -> Settings:
 
     data = _merge(_read_yaml(config_dir / "base.yaml"), _read_yaml(env_config_path))
 
+    auth_public_key_path = _resolve_path(
+        service_root,
+        str(_get_from_env_or_yaml(env_name, os.getenv("AUTH_PUBLIC_KEY_PATH"), data, "auth_public_key_path")),
+    )
+
     env_overrides: dict[str, Any] = {
         "env": env_name,
         "app_name": _get_from_env_or_yaml(env_name, os.getenv("APP_NAME"), data, "app_name"),
@@ -78,6 +94,22 @@ def get_settings() -> Settings:
         "default_top_k": int(_get_from_env_or_yaml(env_name, os.getenv("DEFAULT_TOP_K"), data, "default_top_k")),
         "vector_dimension": int(
             _get_from_env_or_yaml(env_name, os.getenv("VECTOR_DIMENSION"), data, "vector_dimension")
+        ),
+        "auth_public_key_path": auth_public_key_path,
+        "auth_token_issuer": _get_from_env_or_yaml(
+            env_name,
+            os.getenv("AUTH_TOKEN_ISSUER"),
+            data,
+            "auth_token_issuer",
+        ),
+        "user_access_token_audience": _get_from_env_or_yaml(
+            env_name,
+            os.getenv("USER_ACCESS_TOKEN_AUDIENCE"),
+            data,
+            "user_access_token_audience",
+        ),
+        "clock_skew_seconds": int(
+            _get_from_env_or_yaml(env_name, os.getenv("CLOCK_SKEW_SECONDS"), data, "clock_skew_seconds")
         ),
     }
 

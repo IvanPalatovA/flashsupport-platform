@@ -5,9 +5,10 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("CHAT_ORCHESTRATOR_ENV", "dev")
 
 from domain import ChatStatus, DeliveryTarget, RAGResultEntity, SpecialistDecision
+from infrastructure.security import RequestIdentity
 from main import app
 from models import AccessCheckResponse, ActionResponse, SpecialistReviewResponse, UserMessageResponse
-from routes import get_orchestrator_service
+from routes import get_orchestrator_service, require_request_identity
 
 
 class FakeService:
@@ -26,6 +27,7 @@ class FakeService:
         text: str,
         request_operator: bool,
         top_k: int | None,
+        user_access_token: str,
     ) -> object:
         _ = chat_id
         _ = sender_id
@@ -33,6 +35,7 @@ class FakeService:
         _ = text
         _ = request_operator
         _ = top_k
+        _ = user_access_token
 
         class Result:
             chat_id = "chat-1"
@@ -107,6 +110,14 @@ class FakeService:
 
 def test_user_message_response_contract() -> None:
     app.dependency_overrides[get_orchestrator_service] = lambda: FakeService()
+    app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
+        user_subject="user-1",
+        user_login="user-1",
+        user_role="registered_user",
+        service_id="api-gateway",
+        user_token="user-token",
+        service_token="service-token",
+    )
     client = TestClient(app)
 
     response = client.post(
@@ -126,6 +137,14 @@ def test_user_message_response_contract() -> None:
 
 def test_operator_action_response_contract() -> None:
     app.dependency_overrides[get_orchestrator_service] = lambda: FakeService()
+    app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
+        user_subject="op-1",
+        user_login="op-1",
+        user_role="operator",
+        service_id="api-gateway",
+        user_token="user-token",
+        service_token="service-token",
+    )
     client = TestClient(app)
 
     response = client.post(
@@ -145,6 +164,14 @@ def test_operator_action_response_contract() -> None:
 
 def test_specialist_review_response_contract() -> None:
     app.dependency_overrides[get_orchestrator_service] = lambda: FakeService()
+    app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
+        user_subject="spec-1",
+        user_login="spec-1",
+        user_role="specialist",
+        service_id="api-gateway",
+        user_token="user-token",
+        service_token="service-token",
+    )
     client = TestClient(app)
 
     response = client.post(
@@ -165,6 +192,14 @@ def test_specialist_review_response_contract() -> None:
 
 def test_access_check_response_contract() -> None:
     app.dependency_overrides[get_orchestrator_service] = lambda: FakeService()
+    app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
+        user_subject="user-1",
+        user_login="user-1",
+        user_role="registered_user",
+        service_id="api-gateway",
+        user_token="user-token",
+        service_token="service-token",
+    )
     client = TestClient(app)
 
     response = client.post(
