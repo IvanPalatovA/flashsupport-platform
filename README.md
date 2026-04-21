@@ -6,6 +6,9 @@
 <!-- для режима DEV -->
 docker compose --env-file .env.public.dev -f docker-compose.yml up -d --build
 
+# (опционально) переопределить dev-параметры Postgres
+# POSTGRES_DB=flashsupport_dev POSTGRES_USER=flashsupport_dev POSTGRES_PASSWORD=flashsupport_dev
+
 <!-- для режима PROD -->
 docker compose --env-file .env.public.prod -f docker-compose.yml up -d --build
 
