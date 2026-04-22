@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local environment files (never commit)
+.env
+.env.*
+
+# Allow tracked env template
+!.env.example
+
+# Secrets: ignore all private keys, allow only public keys
+*.pem
+!public.pem
+!*.public.pem
+
+# Environment files
+.env.dev
+.env.prod

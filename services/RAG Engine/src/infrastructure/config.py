@@ -18,6 +18,8 @@ class Settings(BaseModel):
     database_url: str
     default_top_k: int
     vector_dimension: int = Field(ge=8)
+    llm_runtime_url: str
+    llm_runtime_timeout_seconds: float = Field(gt=0.0, le=600.0)
     auth_public_key_path: str
     auth_token_issuer: str
     user_access_token_audience: str
@@ -94,6 +96,15 @@ def get_settings() -> Settings:
         "default_top_k": int(_get_from_env_or_yaml(env_name, os.getenv("DEFAULT_TOP_K"), data, "default_top_k")),
         "vector_dimension": int(
             _get_from_env_or_yaml(env_name, os.getenv("VECTOR_DIMENSION"), data, "vector_dimension")
+        ),
+        "llm_runtime_url": _get_from_env_or_yaml(env_name, os.getenv("LLM_RUNTIME_URL"), data, "llm_runtime_url"),
+        "llm_runtime_timeout_seconds": float(
+            _get_from_env_or_yaml(
+                env_name,
+                os.getenv("LLM_RUNTIME_TIMEOUT_SECONDS"),
+                data,
+                "llm_runtime_timeout_seconds",
+            )
         ),
         "auth_public_key_path": auth_public_key_path,
         "auth_token_issuer": _get_from_env_or_yaml(

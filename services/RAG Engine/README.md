@@ -1,12 +1,13 @@
 # FlashSupport RAG Service (MVP)
 
-Retrieval-only сервис семантического поиска для FlashSupport.
+Сервис retrieval + orchestration генерации ответа для FlashSupport.
 
 ## Что делает
 
 - принимает текстовый запрос через HTTP API;
 - выполняет top-k поиск по `chunks.embedding` (pgvector);
-- возвращает результаты с метаданными документа;
+- отправляет instruction + top-k контекст в LLM Runtime;
+- возвращает результаты поиска и финальный сгенерированный ответ;
 - не выполняет ingestion, parsing, chunking, indexing, upload.
 
 ## API
@@ -38,7 +39,9 @@ Response:
       "score": 0.91,
       "text": "..."
     }
-  ]
+  ],
+  "generated_answer": "Сбросьте пароль через личный кабинет в разделе безопасности.",
+  "llm_model": "llama3.1:8b"
 }
 ```
 
@@ -70,7 +73,7 @@ curl http://localhost:8080/health
 
 Важно: достаточно выбрать только `--env-file` (`.env.public.dev` или `.env.public.prod`). Из него Compose берёт `RAG_ENGINE_ENV`, подключает `services/RAG Engine/.env.<mode>` и прокидывает `RAG_ENGINE_ENV` в контейнер.
 
-Для `dev` Compose также поднимает локальный PostgreSQL с `pgvector` (`service: postgres`), который использует `rag-service`.
+Для `dev` Compose также поднимает локальный PostgreSQL с `pgvector` (`service: postgres`) и `llm-runtime`, которые использует `rag-service`.
 При необходимости параметры БД можно переопределить через переменные `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` в момент запуска Compose.
 
 Swagger: 

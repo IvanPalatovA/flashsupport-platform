@@ -36,6 +36,8 @@ def test_search_service_uses_default_top_k_and_returns_results() -> None:
             database_url="postgresql+psycopg://user:pass@localhost:5432/test",
             default_top_k=3,
             vector_dimension=16,
+            llm_runtime_url="http://localhost:8100",
+            llm_runtime_timeout_seconds=180,
             auth_public_key_path="config/keys/auth/public.pem",
             auth_token_issuer="flashsupport-auth-service",
             user_access_token_audience="flashsupport-services",

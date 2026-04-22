@@ -1,4 +1,38 @@
 services:
+  auth-db:
+    image: postgres:16.4
+    container_name: flashsupport-auth-db
+    environment:
+      POSTGRES_DB: ${AUTH_POSTGRES_DB:-flashsupport_auth}
+      POSTGRES_USER: ${AUTH_POSTGRES_USER:-flashsupport_auth}
+      POSTGRES_PASSWORD: ${AUTH_POSTGRES_PASSWORD:-flashsupport_auth}
+    volumes:
+      - flashsupport-auth-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_POSTGRES_USER:-flashsupport_auth} -d ${AUTH_POSTGRES_DB:-flashsupport_auth}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build:
+      context: "./services/Auth Service"
+    container_name: flashsupport-auth-service
+    env_file:
+      - "./services/Auth Service/.env.${AUTH_SERVICE_ENV:?AUTH_SERVICE_ENV is required (dev|prod)}"
+    environment:
+      AUTH_SERVICE_ENV: ${AUTH_SERVICE_ENV:?AUTH_SERVICE_ENV is required (dev|prod)}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    ports:
+      - "8070:8070"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8070/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: flashsupport-postgres
@@ -14,6 +48,25 @@ services:
       timeout: 5s
       retries: 10
 
+  llm-runtime:
+    build:
+      context: "./services/LLM Runtime"
+    container_name: flashsupport-llm-runtime
+    env_file:
+      - "./services/LLM Runtime/.env.${LLM_RUNTIME_ENV:?LLM_RUNTIME_ENV is required (dev|prod)}"
+    environment:
+      LLM_RUNTIME_ENV: ${LLM_RUNTIME_ENV:?LLM_RUNTIME_ENV is required (dev|prod)}
+    depends_on:
+      auth-service:
+        condition: service_healthy
+    ports:
+      - "8100:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   rag-service:
     build:
       context: "./services/RAG Engine"
@@ -24,6 +77,8 @@ services:
       RAG_ENGINE_ENV: ${RAG_ENGINE_ENV:?RAG_ENGINE_ENV is required (dev|prod)}
     depends_on:
       postgres:
+        condition: service_healthy
+      llm-runtime:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -44,6 +99,8 @@ services:
       - "8090:8090"
     depends_on:
       rag-service:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health').read()"]
@@ -73,4 +130,5 @@ services:
       retries: 10
 
 volumes:
+  flashsupport-auth-db-data:
   flashsupport-postgres-data:

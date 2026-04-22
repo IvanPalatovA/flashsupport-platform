@@ -8,3 +8,12 @@ __pycache__/
 
 # Allow tracked env templates
 !.env.example
+
+# Private keys
+*.pem
+!public.pem
+!*.public.pem
+
+# Environment files
+.env.dev
+.env.prod

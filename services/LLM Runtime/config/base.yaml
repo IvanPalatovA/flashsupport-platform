@@ -1,0 +1,28 @@
+app_name: llm-runtime
+log_level: INFO
+ollama_base_url: http://flashsupport-ollama:11434
+llm_model_name: llama3.1:8b
+llm_system_prompt: You are a concise support assistant. Answer only from provided context and clearly mention uncertainty if context is insufficient.
+llm_temperature: 0.2
+llm_top_p: 0.9
+llm_max_tokens: 512
+ollama_request_timeout_seconds: 120
+max_concurrent_inferences: 1
+inference_queue_capacity: 128
+inference_wait_timeout_seconds: 180
+enforce_service_identity: true
+auth_service_url: http://flashsupport-auth-service:8070
+auth_public_key_path: config/keys/auth/public.pem
+auth_token_issuer: flashsupport-auth-service
+user_access_token_audience: flashsupport-services
+incoming_service_token_audience: rag-service
+allowed_caller_service_ids:
+  - rag-service
+  - chat-orchestrator
+service_id: llm-runtime
+service_private_key_path: config/keys/services/llm-runtime.private.pem
+service_token_audience: rag-service
+service_assertion_audience: auth-service
+service_assertion_ttl_seconds: 60
+service_token_refresh_skew_seconds: 60
+clock_skew_seconds: 10

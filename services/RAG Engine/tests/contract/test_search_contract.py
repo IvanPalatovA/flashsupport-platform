@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from domain import SearchResultEntity
+from domain import GeneratedAnswerEntity, SearchResultEntity
 from infrastructure.security import RequestIdentity
 from main import app
 from models import SearchResponse
@@ -19,6 +19,22 @@ class FakeSearchService:
                 text="...",
             )
         ]
+
+    def generate_answer(
+        self,
+        *,
+        query: str,
+        contexts: list[SearchResultEntity],
+        user_token: str,
+        service_token: str,
+        service_name: str,
+    ) -> GeneratedAnswerEntity:
+        _ = query
+        _ = contexts
+        _ = user_token
+        _ = service_token
+        _ = service_name
+        return GeneratedAnswerEntity(answer="Сбросьте пароль в профиле", model="llama3.1:8b")
 
 
 def test_search_response_contract() -> None:

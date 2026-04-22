@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from domain import SearchResultEntity
+from domain import GeneratedAnswerEntity, SearchResultEntity
 from infrastructure.security import RequestIdentity
 from main import app
 from routers import get_search_service, require_request_identity
@@ -21,6 +21,22 @@ class FakeSearchService:
             )
             for _ in range(final_top_k)
         ]
+
+    def generate_answer(
+        self,
+        *,
+        query: str,
+        contexts: list[SearchResultEntity],
+        user_token: str,
+        service_token: str,
+        service_name: str,
+    ) -> GeneratedAnswerEntity:
+        _ = query
+        _ = contexts
+        _ = user_token
+        _ = service_token
+        _ = service_name
+        return GeneratedAnswerEntity(answer="Используйте форму сброса пароля в личном кабинете", model="llama3.1:8b")
 
 
 def test_search_endpoint_happy_path() -> None:
@@ -43,6 +59,8 @@ def test_search_endpoint_happy_path() -> None:
     assert payload["top_k"] == 2
     assert len(payload["results"]) == 2
     assert payload["results"][0]["document_title"] == "Password reset guide"
+    assert payload["generated_answer"] == "Используйте форму сброса пароля в личном кабинете"
+    assert payload["llm_model"] == "llama3.1:8b"
 
     app.dependency_overrides.clear()
 

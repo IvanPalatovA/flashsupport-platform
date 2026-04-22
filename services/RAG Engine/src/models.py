@@ -23,3 +23,5 @@ class SearchResponse(BaseModel):
     query: str
     top_k: int
     results: list[SearchResult]
+    generated_answer: str
+    llm_model: str

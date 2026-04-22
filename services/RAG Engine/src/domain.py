@@ -9,3 +9,9 @@ class SearchResultEntity:
     chunk_index: int
     score: float
     text: str
+
+
+@dataclass(slots=True)
+class GeneratedAnswerEntity:
+    answer: str
+    model: str

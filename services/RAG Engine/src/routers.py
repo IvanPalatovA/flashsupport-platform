@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from infrastructure.config import Settings, get_settings
 from infrastructure.db import get_session
+from infrastructure.llm_runtime_repository import LlmRuntimeError, LlmRuntimeRepository
 from infrastructure.search_repository import SearchRepository
 from infrastructure.security import AuthTokenError, AuthTokenVerifier, RequestIdentity
 from models import HealthResponse, SearchRequest, SearchResponse, SearchResult
@@ -41,7 +42,11 @@ def get_search_service(
     settings: Settings = Depends(get_settings),
 ) -> SearchService:
     repository = SearchRepository(session=session)
-    return SearchService(repository=repository, settings=settings)
+    llm_runtime = LlmRuntimeRepository(
+        base_url=settings.llm_runtime_url,
+        timeout_seconds=settings.llm_runtime_timeout_seconds,
+    )
+    return SearchService(repository=repository, settings=settings, llm_runtime=llm_runtime)
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"])
@@ -52,10 +57,21 @@ def health() -> HealthResponse:
 @router.post("/search", response_model=SearchResponse, tags=["search"])
 def search(
     payload: SearchRequest,
-    _: RequestIdentity = Depends(require_request_identity),
+    identity: RequestIdentity = Depends(require_request_identity),
     service: SearchService = Depends(get_search_service),
 ) -> SearchResponse:
     results = service.search(query=payload.query, top_k=payload.top_k)
+    try:
+        generated = service.generate_answer(
+            query=payload.query,
+            contexts=results,
+            user_token=identity.user_token,
+            service_token=identity.service_token,
+            service_name=identity.service_id,
+        )
+    except (RuntimeError, LlmRuntimeError) as error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+
     final_top_k = payload.top_k if payload.top_k is not None else get_settings().default_top_k
     return SearchResponse(
         query=payload.query,
@@ -71,4 +87,6 @@ def search(
             )
             for item in results
         ],
+        generated_answer=generated.answer,
+        llm_model=generated.model,
     )
