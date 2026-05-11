@@ -30,3 +30,45 @@ class InferenceResponse(BaseModel):
     answer: str
     queue_wait_ms: int = Field(ge=0)
     inference_ms: int = Field(ge=0)
+
+
+class RuntimeModel(BaseModel):
+    model_name: str
+    active: bool
+    source: str
+    local_file: str | None = None
+    model_format: str = "unknown"
+    backend: str = "ollama"
+    runnable: bool = True
+
+
+class DownloadStatusResponse(BaseModel):
+    status: str
+    model_name: str | None = None
+    huggingface_url: str | None = None
+    downloaded_bytes: int = Field(ge=0)
+    total_bytes: int = Field(ge=0)
+    progress_percent: float = Field(ge=0.0, le=100.0)
+    eta_seconds: int | None = Field(default=None, ge=0)
+    started_at: str | None = None
+    updated_at: str | None = None
+    error: str | None = None
+    local_file: str | None = None
+
+
+class RuntimeModelsResponse(BaseModel):
+    active_model: str
+    device: str = "auto"
+    device_warning: str | None = None
+    models: list[RuntimeModel] = Field(default_factory=list)
+    download: DownloadStatusResponse
+
+
+class ModelDownloadRequest(BaseModel):
+    huggingface_url: str = Field(min_length=10, max_length=2000)
+    model_name: str | None = Field(default=None, min_length=1, max_length=128)
+    huggingface_token: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+class ModelActivateRequest(BaseModel):
+    model_name: str = Field(min_length=1, max_length=128)

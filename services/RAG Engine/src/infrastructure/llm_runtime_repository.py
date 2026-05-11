@@ -67,7 +67,18 @@ class LlmRuntimeRepository:
             )
             response.raise_for_status()
         except httpx.HTTPError as error:
-            raise LlmRuntimeError("LLM Runtime request failed: /inference") from error
+            detail = "LLM Runtime request failed: /inference"
+            if isinstance(error, httpx.HTTPStatusError):
+                payload = _safe_json_object(error.response)
+                upstream_detail = payload.get("detail")
+                if isinstance(upstream_detail, str) and upstream_detail.strip() != "":
+                    detail = f"{detail} ({error.response.status_code}: {upstream_detail.strip()})"
+                else:
+                    detail = f"{detail} ({error.response.status_code})"
+            elif str(error).strip() != "":
+                detail = f"{detail} ({str(error).strip()})"
+
+            raise LlmRuntimeError(detail) from error
 
         data = _safe_json_object(response)
 

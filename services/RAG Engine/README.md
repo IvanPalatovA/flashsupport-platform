@@ -99,6 +99,19 @@ cp .env.example .env
 uvicorn main:app --app-dir src --host 0.0.0.0 --port 8080
 ```
 
+## MacBook MPS
+
+Apple MPS/Metal не пробрасывается в Linux-контейнер Docker Desktop. Если RAG Engine запущен в Docker на MacBook, `torch.backends.mps.is_available()` будет `False`, и embedding-модель будет работать на CPU.
+
+Для MPS запускайте RAG Engine нативно на macOS, а остальные сервисы оставляйте в Docker:
+
+```bash
+docker compose --env-file .env.public.dev -f docker-compose.yml -f docker-compose.macos-mps.yml up -d --build
+./scripts/run-rag-macos-mps.sh
+```
+
+Скрипт запускает RAG Engine на `http://localhost:18080` с `EMBEDDING_DEVICE=mps`. Override-файл `docker-compose.macos-mps.yml` направляет `web-service` и `chat-orchestrator` на `http://host.docker.internal:18080`.
+
 ## Тесты
 
 ```bash

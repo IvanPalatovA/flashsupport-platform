@@ -36,6 +36,14 @@ export function asPositiveInt(value: unknown, fieldName: string, defaultValue: n
   return parsed;
 }
 
+export function asRequiredPositiveInt(value: unknown, fieldName: string, minValue = 1, maxValue = Number.MAX_SAFE_INTEGER): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minValue || parsed > maxValue) {
+    throw new Error(`${fieldName} must be an integer in range [${minValue}, ${maxValue}]`);
+  }
+  return parsed;
+}
+
 export function asBoolean(value: unknown, fieldName: string): boolean {
   if (typeof value !== "boolean") {
     throw new Error(`${fieldName} must be a boolean`);

@@ -1,7 +1,7 @@
 app_name: chat-orchestrator
 log_level: INFO
 default_top_k: 3
-http_timeout_seconds: 5
+http_timeout_seconds: 180
 rag_engine_url: http://flashsupport-rag-service:8080
 database_url: postgresql+psycopg://flashsupport_chat:flashsupport_chat@flashsupport-chat-db:5432/flashsupport_chat
 auth_service_url: http://flashsupport-auth-service:8070

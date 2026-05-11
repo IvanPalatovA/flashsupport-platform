@@ -16,11 +16,13 @@ class Settings(BaseModel):
     port: int
     log_level: str
     ollama_base_url: str
+    model_storage_dir: str
     llm_model_name: str
     llm_system_prompt: str
     llm_temperature: float = Field(ge=0.0, le=2.0)
     llm_top_p: float = Field(gt=0.0, le=1.0)
     llm_max_tokens: int = Field(ge=1, le=16384)
+    llm_device: str = "auto"
     ollama_request_timeout_seconds: float = Field(gt=0.0, le=600.0)
     max_concurrent_inferences: int = Field(ge=1, le=32)
     inference_queue_capacity: int = Field(ge=1, le=10000)
@@ -147,6 +149,12 @@ def get_settings() -> Settings:
         "port": int(_get_from_env_or_yaml(env_name, os.getenv("APP_PORT"), data, "port")),
         "log_level": _get_from_env_or_yaml(env_name, os.getenv("LOG_LEVEL"), data, "log_level"),
         "ollama_base_url": _get_from_env_or_yaml(env_name, os.getenv("OLLAMA_BASE_URL"), data, "ollama_base_url"),
+        "model_storage_dir": _get_from_env_or_yaml(
+            env_name,
+            os.getenv("MODEL_STORAGE_DIR"),
+            data,
+            "model_storage_dir",
+        ),
         "llm_model_name": _get_from_env_or_yaml(env_name, os.getenv("LLM_MODEL_NAME"), data, "llm_model_name"),
         "llm_system_prompt": _get_from_env_or_yaml(
             env_name,
@@ -159,6 +167,9 @@ def get_settings() -> Settings:
         ),
         "llm_top_p": float(_get_from_env_or_yaml(env_name, os.getenv("LLM_TOP_P"), data, "llm_top_p")),
         "llm_max_tokens": int(_get_from_env_or_yaml(env_name, os.getenv("LLM_MAX_TOKENS"), data, "llm_max_tokens")),
+        "llm_device": (
+            os.getenv("LLM_DEVICE") if os.getenv("LLM_DEVICE") not in (None, "") else data.get("llm_device", "auto")
+        ),
         "ollama_request_timeout_seconds": float(
             _get_from_env_or_yaml(
                 env_name,

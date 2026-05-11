@@ -58,6 +58,44 @@ def ensure_schema() -> None:
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)",
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_bases (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            embedding_model TEXT NOT NULL,
+            embedding_dimension INTEGER NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT FALSE,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_documents (
+            id BIGSERIAL PRIMARY KEY,
+            knowledge_base_id BIGINT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            source TEXT,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            id BIGSERIAL PRIMARY KEY,
+            knowledge_base_id BIGINT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            document_id BIGINT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            embedding VECTOR NOT NULL,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_kb_id ON knowledge_documents(knowledge_base_id)",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_kb_id ON knowledge_chunks(knowledge_base_id)",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document_id ON knowledge_chunks(document_id)",
     ]
     with get_engine().begin() as conn:
         for stmt in statements:

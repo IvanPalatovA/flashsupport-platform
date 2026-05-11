@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from domain import ServiceTokenEntity, TokenPairEntity, UserEntity
 from infrastructure.config import Settings
-from infrastructure.repositories import AuthRepository, UserLoginAlreadyExistsError
+from infrastructure.repositories import AuthRepository, PasswordHashUnreadableError, UserLoginAlreadyExistsError
 from infrastructure.security import SecurityError, TokenManager
 
 _ALLOWED_REGISTRATION_ROLES = {"registered_user", "operator", "specialist", "admin"}
@@ -61,6 +61,25 @@ class AuthService:
             self._repository.commit()
         except UserLoginAlreadyExistsError as error:
             self._repository.rollback()
+            try:
+                self._repository.get_user_auth_by_login(
+                    login=login,
+                    encryption_key=self._settings.database_encryption_key,
+                )
+            except PasswordHashUnreadableError:
+                self._repository.rollback()
+                user = self._repository.repair_user_password(
+                    login=login,
+                    password_hash=password_hash,
+                    role=normalized_role,
+                    encryption_key=self._settings.database_encryption_key,
+                )
+                self._repository.commit()
+                return user
+            except Exception:
+                self._repository.rollback()
+                raise
+            self._repository.rollback()
             raise LoginAlreadyExistsError(str(error)) from error
         except Exception:
             self._repository.rollback()
@@ -69,10 +88,14 @@ class AuthService:
         return user
 
     def login_user(self, login: str, password: str) -> TokenPairEntity:
-        user = self._repository.get_user_auth_by_login(
-            login=login,
-            encryption_key=self._settings.database_encryption_key,
-        )
+        try:
+            user = self._repository.get_user_auth_by_login(
+                login=login,
+                encryption_key=self._settings.database_encryption_key,
+            )
+        except PasswordHashUnreadableError as error:
+            self._repository.rollback()
+            raise InvalidCredentialsError("invalid login or password") from error
         if user is None or not user.is_active:
             raise InvalidCredentialsError("invalid login or password")
 

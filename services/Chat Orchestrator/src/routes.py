@@ -90,7 +90,8 @@ def _map_error(error: Exception) -> HTTPException:
 		return HTTPException(status_code=403, detail=str(error))
 	if isinstance(error, UpstreamServiceError):
 		return HTTPException(status_code=502, detail=str(error))
-	return HTTPException(status_code=500, detail="internal orchestrator error")
+	detail = str(error).strip() or "internal orchestrator error"
+	return HTTPException(status_code=500, detail=f"internal orchestrator error: {detail}")
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"])

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 from uuid import uuid4
 
 from domain import ContextChunkEntity, InferenceResultEntity
@@ -35,6 +35,7 @@ class LLMBackendPort(Protocol):
         temperature: float | None,
         top_p: float | None,
         max_tokens: int | None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[str, str]:
         ...
 
@@ -71,6 +72,7 @@ class QueuedInferenceService:
         self._workers: list[asyncio.Task[None]] = []
         self._start_lock = asyncio.Lock()
         self._started = False
+        self._generation_epoch = 0
 
     @property
     def allowed_caller_service_ids(self) -> set[str]:
@@ -103,6 +105,11 @@ class QueuedInferenceService:
         await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
         self._started = False
+
+    def notify_model_switched(self, *, previous_model: str, new_model: str) -> None:
+        _ = previous_model
+        _ = new_model
+        self._generation_epoch += 1
 
     async def _ensure_service_identity(self) -> None:
         try:
@@ -164,27 +171,41 @@ class QueuedInferenceService:
             queue_wait_ms = int((started_at - job.enqueued_at) * 1000)
 
             try:
-                answer, model = await asyncio.to_thread(
-                    self._backend.infer,
-                    instruction=job.instruction,
-                    contexts=job.contexts,
-                    temperature=job.temperature,
-                    top_p=job.top_p,
-                    max_tokens=job.max_tokens,
-                )
-                inference_ms = int((time.monotonic() - started_at) * 1000)
-                if not job.future.cancelled():
-                    job.future.set_result(
-                        InferenceResultEntity(
-                            answer=answer,
-                            model=model,
-                            queue_wait_ms=queue_wait_ms,
-                            inference_ms=inference_ms,
+                last_error: Exception | None = None
+                for attempt in range(2):
+                    epoch_snapshot = self._generation_epoch
+                    try:
+                        answer, model = await asyncio.to_thread(
+                            self._backend.infer,
+                            instruction=job.instruction,
+                            contexts=job.contexts,
+                            temperature=job.temperature,
+                            top_p=job.top_p,
+                            max_tokens=job.max_tokens,
+                            should_cancel=lambda: self._generation_epoch != epoch_snapshot,
                         )
-                    )
-            except Exception as error:
-                if not job.future.cancelled():
-                    message = str(error).strip() or "inference backend execution failed"
+                        if epoch_snapshot != self._generation_epoch and attempt == 0:
+                            continue
+                        inference_ms = int((time.monotonic() - started_at) * 1000)
+                        if not job.future.cancelled():
+                            job.future.set_result(
+                                InferenceResultEntity(
+                                    answer=answer,
+                                    model=model,
+                                    queue_wait_ms=queue_wait_ms,
+                                    inference_ms=inference_ms,
+                                )
+                            )
+                        last_error = None
+                        break
+                    except Exception as error:
+                        last_error = error
+                        if epoch_snapshot != self._generation_epoch and attempt == 0:
+                            continue
+                        break
+
+                if last_error is not None and not job.future.cancelled():
+                    message = str(last_error).strip() or "inference backend execution failed"
                     job.future.set_exception(InferenceBackendError(message))
             finally:
                 self._queue.task_done()

@@ -4,13 +4,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from domain import RefreshTokenRecordEntity, UserAuthEntity, UserEntity
 
 
 class UserLoginAlreadyExistsError(ValueError):
+    pass
+
+
+class PasswordHashUnreadableError(ValueError):
     pass
 
 
@@ -27,9 +31,10 @@ class AuthRepository:
     def create_user(self, login: str, password_hash: str, role: str, encryption_key: str) -> UserEntity:
         sql = text(
             """
-            INSERT INTO users (login, password_hash_encrypted, role)
+            INSERT INTO users (login, password_hash, password_hash_encrypted, role)
             VALUES (
                 :login,
+                :password_hash,
                 pgp_sym_encrypt(
                     :password_hash,
                     :encryption_key,
@@ -68,29 +73,85 @@ class AuthRepository:
                 login,
                 role,
                 is_active,
-                pgp_sym_decrypt(password_hash_encrypted, :encryption_key)::text AS password_hash
+                password_hash
             FROM users
             WHERE login = :login
             LIMIT 1
             """
         )
-        row = self._session.execute(
-            sql,
-            {
-                "login": login,
-                "encryption_key": encryption_key,
-            },
-        ).mappings().first()
+        row = self._session.execute(sql, {"login": login}).mappings().first()
 
         if row is None:
             return None
+
+        password_hash = row["password_hash"]
+        if not isinstance(password_hash, str) or password_hash == "":
+            decrypt_sql = text(
+                """
+                SELECT pgp_sym_decrypt(password_hash_encrypted, :encryption_key)::text AS password_hash
+                FROM users
+                WHERE login = :login
+                LIMIT 1
+                """
+            )
+            try:
+                decrypted = self._session.execute(
+                    decrypt_sql,
+                    {
+                        "login": login,
+                        "encryption_key": encryption_key,
+                    },
+                ).mappings().first()
+            except SQLAlchemyError as error:
+                raise PasswordHashUnreadableError("stored password hash cannot be read with current key") from error
+
+            if decrypted is None or not isinstance(decrypted["password_hash"], str) or decrypted["password_hash"] == "":
+                raise PasswordHashUnreadableError("stored password hash is empty")
+            password_hash = decrypted["password_hash"]
+            self._session.execute(
+                text("UPDATE users SET password_hash = :password_hash WHERE login = :login"),
+                {"login": login, "password_hash": password_hash},
+            )
 
         return UserAuthEntity(
             user_id=row["user_id"],
             login=row["login"],
             role=row["role"],
             is_active=bool(row["is_active"]),
-            password_hash=row["password_hash"],
+            password_hash=password_hash,
+        )
+
+    def repair_user_password(self, login: str, password_hash: str, role: str, encryption_key: str) -> UserEntity:
+        sql = text(
+            """
+            UPDATE users
+            SET
+                password_hash = :password_hash,
+                password_hash_encrypted = pgp_sym_encrypt(
+                    :password_hash,
+                    :encryption_key,
+                    'cipher-algo=aes256,compress-algo=1'
+                ),
+                role = :role,
+                is_active = TRUE
+            WHERE login = :login
+            RETURNING id::text AS user_id, login, role, is_active
+            """
+        )
+        row = self._session.execute(
+            sql,
+            {
+                "login": login,
+                "password_hash": password_hash,
+                "encryption_key": encryption_key,
+                "role": role,
+            },
+        ).mappings().one()
+        return UserEntity(
+            user_id=row["user_id"],
+            login=row["login"],
+            role=row["role"],
+            is_active=bool(row["is_active"]),
         )
 
     def store_refresh_token(self, jti: str, user_id: str, expires_at: datetime) -> None:

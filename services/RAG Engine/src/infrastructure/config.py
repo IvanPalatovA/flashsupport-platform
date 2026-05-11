@@ -18,6 +18,11 @@ class Settings(BaseModel):
     database_url: str
     default_top_k: int
     vector_dimension: int = Field(ge=8)
+    embedding_model_storage_dir: str = "var/embedding-models"
+    embedding_device: str = "auto"
+    default_embedding_model: str | None = None
+    chunk_size_chars: int = Field(default=1200, ge=200, le=8000)
+    chunk_overlap_chars: int = Field(default=160, ge=0, le=2000)
     llm_runtime_url: str
     llm_runtime_timeout_seconds: float = Field(gt=0.0, le=600.0)
     auth_public_key_path: str
@@ -85,6 +90,17 @@ def get_settings() -> Settings:
         service_root,
         str(_get_from_env_or_yaml(env_name, os.getenv("AUTH_PUBLIC_KEY_PATH"), data, "auth_public_key_path")),
     )
+    embedding_model_storage_dir = _resolve_path(
+        service_root,
+        str(
+            _get_from_env_or_yaml(
+                env_name,
+                os.getenv("EMBEDDING_MODEL_STORAGE_DIR"),
+                data,
+                "embedding_model_storage_dir",
+            )
+        ),
+    )
 
     env_overrides: dict[str, Any] = {
         "env": env_name,
@@ -96,6 +112,23 @@ def get_settings() -> Settings:
         "default_top_k": int(_get_from_env_or_yaml(env_name, os.getenv("DEFAULT_TOP_K"), data, "default_top_k")),
         "vector_dimension": int(
             _get_from_env_or_yaml(env_name, os.getenv("VECTOR_DIMENSION"), data, "vector_dimension")
+        ),
+        "embedding_model_storage_dir": embedding_model_storage_dir,
+        "embedding_device": (
+            os.getenv("EMBEDDING_DEVICE")
+            if os.getenv("EMBEDDING_DEVICE") not in (None, "")
+            else data.get("embedding_device", "auto")
+        ),
+        "default_embedding_model": (
+            os.getenv("DEFAULT_EMBEDDING_MODEL")
+            if os.getenv("DEFAULT_EMBEDDING_MODEL") not in (None, "")
+            else data.get("default_embedding_model")
+        ),
+        "chunk_size_chars": int(
+            _get_from_env_or_yaml(env_name, os.getenv("CHUNK_SIZE_CHARS"), data, "chunk_size_chars")
+        ),
+        "chunk_overlap_chars": int(
+            _get_from_env_or_yaml(env_name, os.getenv("CHUNK_OVERLAP_CHARS"), data, "chunk_overlap_chars")
         ),
         "llm_runtime_url": _get_from_env_or_yaml(env_name, os.getenv("LLM_RUNTIME_URL"), data, "llm_runtime_url"),
         "llm_runtime_timeout_seconds": float(

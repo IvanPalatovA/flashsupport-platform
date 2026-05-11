@@ -120,7 +120,7 @@ class ChatPersistenceRepository:
 			{"chat_id": chat_id, "status": status.value, "actor_id": actor_id, "note": note},
 		)
 
-	def enqueue_operator_request(self, chat_id: str, sender_role: Role, sender_id: str, text_value: str) -> str | None:
+	def enqueue_operator_request(self, chat_id: str, sender_role: Role, sender_id: str, text: str) -> str | None:
 		self._ensure_chat_exists(chat_id)
 		queue_item_id = f"opq-{uuid4()}"
 		self._session.execute(
@@ -135,7 +135,7 @@ class ChatPersistenceRepository:
 				"chat_id": chat_id,
 				"sender_role": sender_role.value,
 				"sender_id": sender_id,
-				"text": text_value,
+				"text": text,
 			},
 		)
 		return queue_item_id
@@ -235,8 +235,20 @@ class RagEngineRepository:
 				timeout=self._timeout_seconds,
 			)
 			response.raise_for_status()
-		except (httpx.HTTPError, AuthClientError) as error:
-			raise UpstreamServiceError("RAG Engine request failed: /search") from error
+		except AuthClientError as error:
+			raise UpstreamServiceError("RAG Engine request failed: /search (service token error)") from error
+		except httpx.HTTPError as error:
+			detail = "RAG Engine request failed: /search"
+			if isinstance(error, httpx.HTTPStatusError):
+				payload = _safe_json_object(error.response)
+				upstream_detail = payload.get("detail")
+				if isinstance(upstream_detail, str) and upstream_detail.strip() != "":
+					detail = f"{detail} ({error.response.status_code}: {upstream_detail.strip()})"
+				else:
+					detail = f"{detail} ({error.response.status_code})"
+			elif str(error).strip() != "":
+				detail = f"{detail} ({str(error).strip()})"
+			raise UpstreamServiceError(detail) from error
 
 		data = _safe_json_object(response)
 		raw_results_obj = data.get("results")

@@ -1,9 +1,10 @@
 app_name: web-service
 log_level: INFO
-request_timeout_seconds: 7
+request_timeout_seconds: 180
 auth_service_url: http://flashsupport-auth-service:8070
 chat_orchestrator_url: http://flashsupport-chat-orchestrator:8090
 rag_engine_url: http://flashsupport-rag-service:8080
+llm_runtime_url: http://flashsupport-llm-runtime:8100
 knowledge_pipeline_url: http://flashsupport-knowledge-pipeline:8100
 auth_public_key_path: config/keys/auth/public.pem
 auth_token_issuer: flashsupport-auth-service

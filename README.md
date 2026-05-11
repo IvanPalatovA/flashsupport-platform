@@ -10,6 +10,17 @@ docker compose --env-file .env.public.dev -f docker-compose.yml up -d --build
 <!-- для режима PROD -->
 docker compose --env-file .env.public.prod -f docker-compose.yml up -d --build
 
+# MacBook MPS для RAG embedding
+
+Apple MPS/Metal не доступен внутри обычных Linux-контейнеров Docker Desktop. Чтобы embedding-модель RAG работала на MPS, запускайте остальные сервисы в Docker, а RAG Engine нативно на macOS:
+
+```bash
+docker compose --env-file .env.public.dev -f docker-compose.yml -f docker-compose.macos-mps.yml up -d --build
+./scripts/run-rag-macos-mps.sh
+```
+
+В этом режиме контейнеры `web-service` и `chat-orchestrator` обращаются к RAG Engine на хосте по `http://host.docker.internal:18080`, а сам RAG Engine использует `EMBEDDING_DEVICE=mps`.
+
 # Остановить все сервисы
 <!-- если запущено в режиме DEV -->
 docker compose --env-file .env.public.dev -f docker-compose.yml down

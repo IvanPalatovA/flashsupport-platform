@@ -12,6 +12,7 @@ export interface Settings {
   authServiceUrl: string;
   chatOrchestratorUrl: string;
   ragEngineUrl: string;
+  llmRuntimeUrl: string;
   knowledgePipelineUrl: string;
   authPublicKeyPath: string;
   authTokenIssuer: string;
@@ -158,6 +159,7 @@ export function getSettings(): Settings {
       "chat_orchestrator_url",
     ),
     ragEngineUrl: getFromEnvOrYaml(envName, process.env.RAG_ENGINE_URL, merged, "rag_engine_url"),
+    llmRuntimeUrl: getFromEnvOrYaml(envName, process.env.LLM_RUNTIME_URL, merged, "llm_runtime_url"),
     knowledgePipelineUrl: getFromEnvOrYaml(
       envName,
       process.env.KNOWLEDGE_PIPELINE_URL,

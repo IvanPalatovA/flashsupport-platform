@@ -49,6 +49,96 @@ interface SessionProfile {
   operatorCallThresholdMessages: number;
 }
 
+interface RuntimeDownloadStatus {
+  status: string;
+  model_name: string | null;
+  huggingface_url: string | null;
+  downloaded_bytes: number;
+  total_bytes: number;
+  progress_percent: number;
+  eta_seconds: number | null;
+  started_at: string | null;
+  updated_at: string | null;
+  error: string | null;
+  local_file: string | null;
+}
+
+interface RuntimeModelInfo {
+  model_name: string;
+  active: boolean;
+  source: string;
+  local_file: string | null;
+  model_format?: string;
+  backend?: string;
+  runnable?: boolean;
+}
+
+interface RuntimeModelsPayload {
+  active_model: string;
+  device?: string;
+  device_warning?: string | null;
+  models: RuntimeModelInfo[];
+  download: RuntimeDownloadStatus;
+}
+
+interface EmbeddingDownloadStatus {
+  status: string;
+  model_name: string | null;
+  huggingface_url: string | null;
+  downloaded_bytes: number;
+  total_bytes: number;
+  progress_percent: number;
+  started_at: string | null;
+  updated_at: string | null;
+  error: string | null;
+  local_path: string | null;
+}
+
+interface EmbeddingModelInfo {
+  model_name: string;
+  active: boolean;
+  source: string;
+  repo_id: string;
+  local_path: string;
+  embedding_dimension: number;
+  device: string;
+  device_warning?: string | null;
+  created_at: string | null;
+}
+
+interface EmbeddingModelsPayload {
+  active_model: string | null;
+  active_dimension: number | null;
+  device?: string;
+  device_warning?: string | null;
+  models: EmbeddingModelInfo[];
+  download: EmbeddingDownloadStatus;
+}
+
+interface KnowledgeBasePayload {
+  id: number;
+  name: string;
+  description: string | null;
+  embedding_model: string;
+  embedding_dimension: number;
+  is_active: boolean;
+  document_count: number;
+  chunk_count: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+interface KnowledgeDocumentPayload {
+  id: number;
+  knowledge_base_id: number;
+  title: string;
+  source: string | null;
+  chunk_count: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 export class WebServiceError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -303,6 +393,84 @@ export class WebService {
     }
   }
 
+  private async callRagAdmin<T>(
+    path: string,
+    userToken: string,
+    method: "GET" | "POST" | "DELETE",
+    payload?: Record<string, unknown>,
+  ): Promise<T> {
+    try {
+      const serviceToken = await this.getServiceToken(this.settings.serviceTokenAudienceRagService);
+      const response = await this.upstream.ragEngine.request({
+        url: path,
+        method,
+        data: payload,
+        headers: {
+          Authorization: `Bearer ${userToken}`,
+          "X-Service-Authorization": `Bearer ${serviceToken}`,
+          "X-Service-Name": this.settings.serviceId,
+        },
+      });
+      return response.data as T;
+    } catch (error) {
+      throw this.mapError(error, `RAG Engine admin call failed: ${path}`, 502);
+    }
+  }
+
+  private async callLlmRuntimeAdmin<T>(
+    path: string,
+    userToken: string,
+    method: "GET" | "POST",
+    payload?: Record<string, unknown>,
+  ): Promise<T> {
+    try {
+      const serviceToken = await this.getServiceToken(this.settings.serviceTokenAudienceRagService);
+      const response = await this.upstream.llmRuntime.request({
+        url: path,
+        method,
+        data: payload,
+        headers: {
+          Authorization: `Bearer ${userToken}`,
+          "X-Service-Authorization": `Bearer ${serviceToken}`,
+          "X-Service-Name": this.settings.serviceId,
+        },
+      });
+      return response.data as T;
+    } catch (error) {
+      throw this.mapError(error, `LLM Runtime call failed: ${path}`, 502);
+    }
+  }
+
+  private createOperatorAdminChat(operatorId: string, operatorLogin: string): ChatThread {
+    const createdAt = this.nowIso();
+    const chatId = uuidv4();
+    const chat: ChatThread = {
+      chatId,
+      title: `Admin review ${chatId.slice(0, 8)}`,
+      ownerUserId: operatorId,
+      status: "in_progress_operator",
+      escalatedToOperator: true,
+      assignedOperatorId: operatorId,
+      messages: [
+        {
+          messageId: uuidv4(),
+          chatId,
+          senderRole: "system",
+          senderId: "web-service",
+          text: `Operator ${operatorLogin} opened admin review chat`,
+          createdAt,
+        },
+      ],
+      createdAt,
+      updatedAt: createdAt,
+    };
+    this.chats.set(chatId, chat);
+    const chatIds = this.chatsByOwner.get(operatorId) ?? new Set<string>();
+    chatIds.add(chatId);
+    this.chatsByOwner.set(operatorId, chatIds);
+    return chat;
+  }
+
   async registerAndLogin(
     sessionId: string,
     login: string,
@@ -474,13 +642,27 @@ export class WebService {
 
     this.addMessage(chat, "registered_user", session.userId, text);
 
-    const response = await this.callChatOrchestrator<OrchestratorUserResponse>("/messages/user", session.accessToken, {
-      chat_id: chat.chatId,
-      sender_id: session.userId,
-      sender_role: "registered_user",
-      text,
-      request_operator: chat.escalatedToOperator,
-    });
+    let response: OrchestratorUserResponse;
+    try {
+      response = await this.callChatOrchestrator<OrchestratorUserResponse>("/messages/user", session.accessToken, {
+        chat_id: chat.chatId,
+        sender_id: session.userId,
+        sender_role: "registered_user",
+        text,
+        request_operator: chat.escalatedToOperator,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Chat Orchestrator request failed";
+      this.addMessage(chat, "system", "web-service", `Message saved, but assistant response failed: ${message}`);
+      return {
+        summary: this.toSummary(chat),
+        route: "rag_engine",
+        chatStatus: chat.status,
+        canCallOperator: this.canCallOperator(chat),
+        orchestratorMessage: message,
+        messages: chat.messages,
+      };
+    }
 
     chat.status = response.chat_status;
     if (response.route === "operator_queue") {
@@ -653,7 +835,7 @@ export class WebService {
 
   async createKnowledgeRequest(
     sessionId: string | undefined,
-    chatId: string,
+    chatId: string | undefined,
     question?: string,
     answer?: string,
   ): Promise<KnowledgeRequest> {
@@ -662,12 +844,12 @@ export class WebService {
       throw new WebServiceError(403, "Only operators can submit knowledge requests");
     }
 
-    const chat = this.getChatOrThrow(chatId);
+    const chat = chatId ? this.getChatOrThrow(chatId) : this.createOperatorAdminChat(session.userId, session.login);
     const draft = this.buildKnowledgeDraft(chat);
 
     const request: KnowledgeRequest = {
       requestId: uuidv4(),
-      chatId,
+      chatId: chat.chatId,
       question: question && question.trim() !== "" ? question.trim() : draft.question,
       answer: answer && answer.trim() !== "" ? answer.trim() : draft.answer,
       createdBy: session.userId,
@@ -751,6 +933,208 @@ export class WebService {
     }
 
     return [...this.accounts.values()].sort((a, b) => (a.login > b.login ? 1 : -1));
+  }
+
+  async listRuntimeModels(sessionId: string | undefined): Promise<RuntimeModelsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage LLM Runtime models");
+    }
+    return this.callLlmRuntimeAdmin<RuntimeModelsPayload>("/models", session.accessToken, "GET");
+  }
+
+  async startRuntimeModelDownload(
+    sessionId: string | undefined,
+    huggingfaceUrl: string,
+    huggingfaceToken?: string,
+    modelName?: string,
+  ): Promise<RuntimeDownloadStatus> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage LLM Runtime models");
+    }
+    return this.callLlmRuntimeAdmin<RuntimeDownloadStatus>("/models/download", session.accessToken, "POST", {
+      huggingface_url: huggingfaceUrl,
+      huggingface_token: huggingfaceToken ?? null,
+      model_name: modelName ?? null,
+    });
+  }
+
+  async getRuntimeModelDownloadStatus(sessionId: string | undefined): Promise<RuntimeDownloadStatus> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage LLM Runtime models");
+    }
+    return this.callLlmRuntimeAdmin<RuntimeDownloadStatus>("/models/download/status", session.accessToken, "GET");
+  }
+
+  async activateRuntimeModel(sessionId: string | undefined, modelName: string): Promise<RuntimeModelsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage LLM Runtime models");
+    }
+    return this.callLlmRuntimeAdmin<RuntimeModelsPayload>("/models/activate", session.accessToken, "POST", {
+      model_name: modelName,
+    });
+  }
+
+  async listEmbeddingModels(sessionId: string | undefined): Promise<EmbeddingModelsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG embedding models");
+    }
+    return this.callRagAdmin<EmbeddingModelsPayload>("/embedding-models", session.accessToken, "GET");
+  }
+
+  async startEmbeddingModelDownload(
+    sessionId: string | undefined,
+    huggingfaceUrl: string,
+    huggingfaceToken?: string,
+    modelName?: string,
+  ): Promise<EmbeddingDownloadStatus> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG embedding models");
+    }
+    return this.callRagAdmin<EmbeddingDownloadStatus>("/embedding-models/download", session.accessToken, "POST", {
+      huggingface_url: huggingfaceUrl,
+      huggingface_token: huggingfaceToken ?? null,
+      model_name: modelName ?? null,
+      activate: true,
+    });
+  }
+
+  async getEmbeddingModelDownloadStatus(sessionId: string | undefined): Promise<EmbeddingDownloadStatus> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG embedding models");
+    }
+    return this.callRagAdmin<EmbeddingDownloadStatus>("/embedding-models/download/status", session.accessToken, "GET");
+  }
+
+  async activateEmbeddingModel(sessionId: string | undefined, modelName: string): Promise<EmbeddingModelsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG embedding models");
+    }
+    return this.callRagAdmin<EmbeddingModelsPayload>("/embedding-models/activate", session.accessToken, "POST", {
+      model_name: modelName,
+    });
+  }
+
+  async listKnowledgeBases(sessionId: string | undefined): Promise<KnowledgeBasePayload[]> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG knowledge bases");
+    }
+    const payload = await this.callRagAdmin<{ bases: KnowledgeBasePayload[] }>("/knowledge-bases", session.accessToken, "GET");
+    return payload.bases;
+  }
+
+  async createKnowledgeBase(
+    sessionId: string | undefined,
+    payload: {
+      name: string;
+      description?: string;
+      documents: Array<{ title: string; text: string; source?: string }>;
+    },
+  ): Promise<KnowledgeBasePayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG knowledge bases");
+    }
+    return this.callRagAdmin<KnowledgeBasePayload>("/knowledge-bases", session.accessToken, "POST", {
+      name: payload.name,
+      description: payload.description ?? null,
+      documents: payload.documents.map((document) => ({
+        title: document.title,
+        text: document.text,
+        source: document.source ?? null,
+      })),
+      activate: true,
+    });
+  }
+
+  async activateKnowledgeBase(sessionId: string | undefined, knowledgeBaseId: number): Promise<KnowledgeBasePayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG knowledge bases");
+    }
+    return this.callRagAdmin<KnowledgeBasePayload>(
+      `/knowledge-bases/${knowledgeBaseId}/activate`,
+      session.accessToken,
+      "POST",
+    );
+  }
+
+  async deleteKnowledgeBase(
+    sessionId: string | undefined,
+    knowledgeBaseId: number,
+    adminPassword: string,
+  ): Promise<void> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG knowledge bases");
+    }
+    try {
+      await this.authClient.login(session.login, adminPassword);
+    } catch (error) {
+      throw this.mapError(error, "Admin password confirmation failed", 401);
+    }
+    await this.callRagAdmin<void>(`/knowledge-bases/${knowledgeBaseId}`, session.accessToken, "DELETE");
+  }
+
+  async listKnowledgeBaseDocuments(
+    sessionId: string | undefined,
+    knowledgeBaseId: number,
+  ): Promise<KnowledgeDocumentPayload[]> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG knowledge bases");
+    }
+    const payload = await this.callRagAdmin<{ documents: KnowledgeDocumentPayload[] }>(
+      `/knowledge-bases/${knowledgeBaseId}/documents`,
+      session.accessToken,
+      "GET",
+    );
+    return payload.documents;
+  }
+
+  async addKnowledgeBaseDocument(
+    sessionId: string | undefined,
+    knowledgeBaseId: number,
+    payload: { title: string; text: string; source?: string },
+  ): Promise<KnowledgeDocumentPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG knowledge bases");
+    }
+    return this.callRagAdmin<KnowledgeDocumentPayload>(
+      `/knowledge-bases/${knowledgeBaseId}/documents`,
+      session.accessToken,
+      "POST",
+      {
+        title: payload.title,
+        text: payload.text,
+        source: payload.source ?? null,
+      },
+    );
+  }
+
+  async deleteKnowledgeBaseDocument(
+    sessionId: string | undefined,
+    knowledgeBaseId: number,
+    documentId: number,
+  ): Promise<void> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG knowledge bases");
+    }
+    await this.callRagAdmin<void>(
+      `/knowledge-bases/${knowledgeBaseId}/documents/${documentId}`,
+      session.accessToken,
+      "DELETE",
+    );
   }
 
   async blockAccount(sessionId: string | undefined, accountId: string, blocked: boolean): Promise<AccountRecord> {

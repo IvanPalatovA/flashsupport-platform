@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+import hashlib
+import threading
+from pathlib import Path
+from typing import Any, Callable
 
-from ollama import Client, ResponseError
+import httpx
 
 from domain import ContextChunkEntity
 from infrastructure.config import Settings
@@ -15,10 +19,130 @@ class OllamaClientError(RuntimeError):
 class OllamaClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._client = Client(
-            host=settings.ollama_base_url,
-            timeout=settings.ollama_request_timeout_seconds,
-        )
+        self._base_url = settings.ollama_base_url.rstrip("/")
+        self._timeout_seconds = settings.ollama_request_timeout_seconds
+        self._active_model = settings.llm_model_name
+        self._requested_device = self._normalize_device(settings.llm_device)
+        self._device = "gpu" if self._requested_device in {"cuda", "mps"} else self._requested_device
+        self._model_lock = threading.RLock()
+
+    def _normalize_device(self, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized == "":
+            normalized = "auto"
+        if normalized not in {"auto", "cpu", "gpu", "cuda", "mps"}:
+            raise OllamaClientError("llm_device must be one of: auto, cpu, gpu, cuda, mps")
+        return normalized
+
+    def get_active_model(self) -> str:
+        with self._model_lock:
+            return self._active_model
+
+    def get_device(self) -> str:
+        return self._requested_device
+
+    def get_device_warning(self) -> str | None:
+        if self._device == "cpu":
+            return "LLM Runtime is forced to CPU; Ollama will not use GPU layers for inference."
+        if self._requested_device == "auto":
+            return "Ollama chooses CUDA, Metal/MPS, or CPU in its own process; this service cannot verify the actual accelerator."
+        return None
+
+    def set_active_model(self, model_name: str) -> None:
+        normalized = model_name.strip()
+        if normalized == "":
+            raise OllamaClientError("model name cannot be empty")
+        with self._model_lock:
+            self._active_model = normalized
+
+    def list_models(self) -> list[str]:
+        url = f"{self._base_url}/api/tags"
+        try:
+            response = httpx.get(url, timeout=self._timeout_seconds)
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise OllamaClientError("failed to query ollama model list") from error
+
+        payload: Any
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise OllamaClientError("ollama returned invalid model list payload") from error
+
+        models_raw = payload.get("models") if isinstance(payload, dict) else None
+        if not isinstance(models_raw, list):
+            return []
+
+        names: list[str] = []
+        for item in models_raw:
+            if not isinstance(item, dict):
+                continue
+            name_obj = item.get("name") or item.get("model")
+            if isinstance(name_obj, str) and name_obj.strip() != "":
+                names.append(name_obj.strip())
+        return names
+
+    def stop_model(self, model_name: str) -> None:
+        normalized = model_name.strip()
+        if normalized == "":
+            return
+        url = f"{self._base_url}/api/stop"
+        try:
+            response = httpx.post(url, json={"model": normalized}, timeout=self._timeout_seconds)
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise OllamaClientError(f"failed to stop running model '{normalized}'") from error
+
+    def create_model_from_gguf(self, model_name: str, gguf_path: str, system_prompt: str) -> None:
+        normalized_model = model_name.strip()
+        normalized_path = gguf_path.strip()
+        if normalized_model == "":
+            raise OllamaClientError("model name cannot be empty")
+        if normalized_path == "":
+            raise OllamaClientError("gguf path cannot be empty")
+
+        gguf_file = Path(normalized_path)
+        if not gguf_file.exists() or not gguf_file.is_file():
+            raise OllamaClientError(f"gguf file not found: {normalized_path}")
+
+        digest_hash = hashlib.sha256()
+        with gguf_file.open("rb") as source:
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest_hash.update(chunk)
+        digest = f"sha256:{digest_hash.hexdigest()}"
+
+        blob_url = f"{self._base_url}/api/blobs/{digest}"
+        try:
+            with gguf_file.open("rb") as source:
+                upload_response = httpx.post(
+                    blob_url,
+                    content=source,
+                    headers={"Content-Type": "application/octet-stream"},
+                    timeout=None,
+                )
+                upload_response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise OllamaClientError(f"failed to upload GGUF blob to ollama for model '{normalized_model}'") from error
+
+        modelfile = f'FROM {gguf_file.name}\nSYSTEM """\n{system_prompt.strip()}\n"""\n'
+        create_url = f"{self._base_url}/api/create"
+        try:
+            create_response = httpx.post(
+                create_url,
+                json={
+                    "model": normalized_model,
+                    "modelfile": modelfile,
+                    "files": {gguf_file.name: digest},
+                    "stream": False,
+                },
+                timeout=max(600.0, self._timeout_seconds),
+            )
+            create_response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise OllamaClientError(f"failed to register model '{normalized_model}' in ollama") from error
 
     def _build_user_prompt(self, instruction: str, contexts: list[ContextChunkEntity]) -> str:
         lines = [f"Instruction:\n{instruction.strip()}", ""]
@@ -41,35 +165,6 @@ class OllamaClient:
         lines.append("Use only relevant information from snippets. If snippets are insufficient, say that directly.")
         return "\n".join(lines)
 
-    def _extract_content(self, response: Any) -> str:
-        message_obj: Any
-        if isinstance(response, dict):
-            message_obj = response.get("message")
-        else:
-            message_obj = getattr(response, "message", None)
-
-        content_obj: Any
-        if isinstance(message_obj, dict):
-            content_obj = message_obj.get("content")
-        else:
-            content_obj = getattr(message_obj, "content", None)
-
-        if not isinstance(content_obj, str) or content_obj.strip() == "":
-            raise OllamaClientError("ollama returned empty message content")
-
-        return content_obj.strip()
-
-    def _extract_model(self, response: Any) -> str:
-        model_obj: Any
-        if isinstance(response, dict):
-            model_obj = response.get("model")
-        else:
-            model_obj = getattr(response, "model", None)
-
-        if isinstance(model_obj, str) and model_obj.strip() != "":
-            return model_obj
-        return self._settings.llm_model_name
-
     def infer(
         self,
         *,
@@ -78,32 +173,72 @@ class OllamaClient:
         temperature: float | None,
         top_p: float | None,
         max_tokens: int | None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[str, str]:
         final_temperature = temperature if temperature is not None else self._settings.llm_temperature
         final_top_p = top_p if top_p is not None else self._settings.llm_top_p
         final_max_tokens = max_tokens if max_tokens is not None else self._settings.llm_max_tokens
+        target_model = self.get_active_model()
 
         options = {
             "temperature": final_temperature,
             "top_p": final_top_p,
             "num_predict": final_max_tokens,
         }
+        if self._device == "cpu":
+            options["num_gpu"] = 0
 
+        payload = {
+            "model": target_model,
+            "messages": [
+                {"role": "system", "content": self._settings.llm_system_prompt},
+                {"role": "user", "content": self._build_user_prompt(instruction=instruction, contexts=contexts)},
+            ],
+            "options": options,
+            "stream": True,
+        }
+
+        answer_parts: list[str] = []
+        resolved_model = target_model
         try:
-            response = self._client.chat(
-                model=self._settings.llm_model_name,
-                messages=[
-                    {"role": "system", "content": self._settings.llm_system_prompt},
-                    {"role": "user", "content": self._build_user_prompt(instruction=instruction, contexts=contexts)},
-                ],
-                options=options,
-                stream=False,
-            )
-        except ResponseError as error:
-            raise OllamaClientError(f"ollama request failed: {error.error}") from error
+            with httpx.stream(
+                "POST",
+                f"{self._base_url}/api/chat",
+                json=payload,
+                timeout=self._timeout_seconds,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if should_cancel and should_cancel():
+                        try:
+                            self.stop_model(target_model)
+                        except OllamaClientError:
+                            pass
+                        raise OllamaClientError("inference interrupted: active model was switched")
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(chunk, dict):
+                        continue
+                    if isinstance(chunk.get("error"), str) and chunk["error"].strip() != "":
+                        raise OllamaClientError(f"ollama request failed: {chunk['error'].strip()}")
+                    model_obj = chunk.get("model")
+                    if isinstance(model_obj, str) and model_obj.strip() != "":
+                        resolved_model = model_obj.strip()
+                    message_obj = chunk.get("message")
+                    if isinstance(message_obj, dict):
+                        content_obj = message_obj.get("content")
+                        if isinstance(content_obj, str) and content_obj != "":
+                            answer_parts.append(content_obj)
+        except OllamaClientError:
+            raise
         except Exception as error:
             raise OllamaClientError("ollama request failed") from error
 
-        answer = self._extract_content(response)
-        model = self._extract_model(response)
-        return answer, model
+        answer = "".join(answer_parts).strip()
+        if answer == "":
+            raise OllamaClientError("ollama returned empty message content")
+        return answer, resolved_model

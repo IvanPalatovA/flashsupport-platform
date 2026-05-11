@@ -42,6 +42,7 @@ def ensure_schema() -> None:
         CREATE TABLE IF NOT EXISTS users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             login TEXT NOT NULL UNIQUE,
+            password_hash TEXT,
             password_hash_encrypted BYTEA NOT NULL,
             role TEXT NOT NULL,
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -76,6 +77,7 @@ def ensure_schema() -> None:
         "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at)",
         "CREATE INDEX IF NOT EXISTS idx_used_service_assertions_expires_at ON used_service_assertions(expires_at)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
     ]
 
     with get_engine().begin() as conn:

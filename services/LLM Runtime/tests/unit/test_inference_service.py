@@ -21,12 +21,14 @@ class FakeBackend:
         temperature: float | None,
         top_p: float | None,
         max_tokens: int | None,
+        should_cancel=None,
     ) -> tuple[str, str]:
         _ = instruction
         _ = contexts
         _ = temperature
         _ = top_p
         _ = max_tokens
+        _ = should_cancel
 
         self.calls += 1
         if self.delay_seconds > 0:
@@ -51,7 +53,9 @@ def build_settings(*, queue_capacity: int = 8, wait_timeout: float = 3.0) -> Set
         port=8100,
         log_level="INFO",
         ollama_base_url="http://localhost:11434",
+        model_storage_dir="/tmp/flashsupport-models-test",
         llm_model_name="llama3.1:8b",
+        llm_device="auto",
         llm_system_prompt="You are a test assistant",
         llm_temperature=0.2,
         llm_top_p=0.9,

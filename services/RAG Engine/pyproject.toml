@@ -19,6 +19,9 @@ dependencies = [
   "PyYAML==6.0.0",
   "PyJWT==2.8.0",
   "cryptography==43.0.1",
+  "huggingface-hub==0.24.6",
+  "torch==2.3.1",
+  "sentence-transformers==3.0.1",
 ]
 
 [project.optional-dependencies]

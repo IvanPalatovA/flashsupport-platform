@@ -39,6 +39,24 @@ class FakeSearchService:
         return GeneratedAnswerEntity(answer="Используйте форму сброса пароля в личном кабинете", model="llama3.1:8b")
 
 
+class FailingGenerationSearchService(FakeSearchService):
+    def generate_answer(
+        self,
+        *,
+        query: str,
+        contexts: list[SearchResultEntity],
+        user_token: str,
+        service_token: str,
+        service_name: str,
+    ) -> GeneratedAnswerEntity:
+        _ = query
+        _ = contexts
+        _ = user_token
+        _ = service_token
+        _ = service_name
+        raise RuntimeError("LLM Runtime request failed: /inference")
+
+
 def test_search_endpoint_happy_path() -> None:
     app.dependency_overrides[get_search_service] = lambda: FakeSearchService()
     app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
@@ -65,7 +83,29 @@ def test_search_endpoint_happy_path() -> None:
     app.dependency_overrides.clear()
 
 
+def test_search_endpoint_returns_502_when_generation_fails() -> None:
+    app.dependency_overrides[get_search_service] = lambda: FailingGenerationSearchService()
+    app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
+        user_subject="user-1",
+        user_login="user",
+        user_role="registered_user",
+        service_id="chat-orchestrator",
+        user_token="user-token",
+        service_token="service-token",
+    )
+    client = TestClient(app)
+
+    response = client.post("/search", json={"query": "как сбросить пароль", "top_k": 1})
+
+    assert response.status_code == 502
+    payload = response.json()
+    assert payload["detail"] == "LLM Runtime request failed: /inference"
+
+    app.dependency_overrides.clear()
+
+
 def test_search_endpoint_validation_error() -> None:
+    app.dependency_overrides[get_search_service] = lambda: FakeSearchService()
     app.dependency_overrides[require_request_identity] = lambda: RequestIdentity(
         user_subject="user-1",
         user_login="user",

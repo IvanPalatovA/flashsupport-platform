@@ -1,11 +1,13 @@
 app_name: llm-runtime
 log_level: INFO
 ollama_base_url: http://flashsupport-ollama:11434
+model_storage_dir: /tmp/flashsupport-models
 llm_model_name: llama3.1:8b
 llm_system_prompt: You are a concise support assistant. Answer only from provided context and clearly mention uncertainty if context is insufficient.
 llm_temperature: 0.2
 llm_top_p: 0.9
 llm_max_tokens: 512
+llm_device: auto
 ollama_request_timeout_seconds: 120
 max_concurrent_inferences: 1
 inference_queue_capacity: 128
@@ -19,6 +21,7 @@ incoming_service_token_audience: rag-service
 allowed_caller_service_ids:
   - rag-service
   - chat-orchestrator
+  - web-service
 service_id: llm-runtime
 service_private_key_path: config/keys/services/llm-runtime.private.pem
 service_token_audience: rag-service

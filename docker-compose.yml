@@ -65,6 +65,14 @@ services:
       timeout: 5s
       retries: 10
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: flashsupport-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - flashsupport-ollama-data:/root/.ollama
+
   llm-runtime:
     build:
       context: "./services/LLM Runtime"
@@ -76,6 +84,8 @@ services:
     depends_on:
       auth-service:
         condition: service_healthy
+      ollama:
+        condition: service_started
     ports:
       - "8100:8100"
     healthcheck:
@@ -99,6 +109,8 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
+    volumes:
+      - flashsupport-rag-embedding-models:/app/var/embedding-models
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
       interval: 10s
@@ -155,6 +167,8 @@ volumes:
   flashsupport-auth-db-data:
   flashsupport-chat-db-data:
   flashsupport-postgres-data:
+  flashsupport-ollama-data:
+  flashsupport-rag-embedding-models:
 
 networks:
   chat-orchestrator-private:

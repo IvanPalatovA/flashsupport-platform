@@ -5,9 +5,18 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from domain import ContextChunkEntity
 from infrastructure.auth_client import ServiceTokenProvider
 from infrastructure.config import Settings, get_settings
+from infrastructure.model_admin import ModelAdminError, ModelAdminService
 from infrastructure.ollama_client import OllamaClient
 from infrastructure.security import AuthTokenError, AuthTokenVerifier, RequestIdentity
-from models import HealthResponse, InferenceRequest, InferenceResponse
+from models import (
+    DownloadStatusResponse,
+    HealthResponse,
+    InferenceRequest,
+    InferenceResponse,
+    ModelActivateRequest,
+    ModelDownloadRequest,
+    RuntimeModelsResponse,
+)
 from services import (
     InferenceBackendError,
     InferenceQueueFullError,
@@ -30,13 +39,28 @@ def get_token_verifier() -> AuthTokenVerifier:
 
 
 @lru_cache(maxsize=1)
+def get_ollama_client() -> OllamaClient:
+    return OllamaClient(get_settings())
+
+
+@lru_cache(maxsize=1)
 def get_inference_service() -> QueuedInferenceService:
     settings = get_settings()
-    backend = OllamaClient(settings=settings)
+    backend = get_ollama_client()
     return QueuedInferenceService(
         settings=settings,
         backend=backend,
         service_identity_provider=get_service_token_provider(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_model_admin_service() -> ModelAdminService:
+    inference_service = get_inference_service()
+    return ModelAdminService(
+        settings=get_settings(),
+        backend=get_ollama_client(),
+        on_model_switched=inference_service.notify_model_switched,
     )
 
 
@@ -64,6 +88,11 @@ def _enforce_allowed_caller(identity: RequestIdentity, service: QueuedInferenceS
             status_code=status.HTTP_403_FORBIDDEN,
             detail="calling service is not allowed for LLM Runtime",
         )
+
+
+def _enforce_admin_user(identity: RequestIdentity) -> None:
+    if identity.user_role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin role is required")
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"])
@@ -112,3 +141,65 @@ async def inference(
         queue_wait_ms=result.queue_wait_ms,
         inference_ms=result.inference_ms,
     )
+
+
+@router.get("/models", response_model=RuntimeModelsResponse, tags=["models"])
+def list_models(
+    identity: RequestIdentity = Depends(require_request_identity),
+    service: QueuedInferenceService = Depends(get_inference_service),
+    admin_service: ModelAdminService = Depends(get_model_admin_service),
+) -> RuntimeModelsResponse:
+    _enforce_allowed_caller(identity=identity, service=service)
+    _enforce_admin_user(identity)
+    try:
+        payload = admin_service.list_models()
+        return RuntimeModelsResponse.model_validate(payload)
+    except ModelAdminError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+
+@router.post("/models/download", response_model=DownloadStatusResponse, tags=["models"])
+async def start_model_download(
+    payload: ModelDownloadRequest,
+    identity: RequestIdentity = Depends(require_request_identity),
+    service: QueuedInferenceService = Depends(get_inference_service),
+    admin_service: ModelAdminService = Depends(get_model_admin_service),
+) -> DownloadStatusResponse:
+    _enforce_allowed_caller(identity=identity, service=service)
+    _enforce_admin_user(identity)
+    try:
+        status_payload = await admin_service.start_download(
+            huggingface_url=payload.huggingface_url,
+            token=payload.huggingface_token,
+            model_name=payload.model_name,
+        )
+        return DownloadStatusResponse.model_validate(status_payload)
+    except ModelAdminError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+
+@router.get("/models/download/status", response_model=DownloadStatusResponse, tags=["models"])
+def get_model_download_status(
+    identity: RequestIdentity = Depends(require_request_identity),
+    service: QueuedInferenceService = Depends(get_inference_service),
+    admin_service: ModelAdminService = Depends(get_model_admin_service),
+) -> DownloadStatusResponse:
+    _enforce_allowed_caller(identity=identity, service=service)
+    _enforce_admin_user(identity)
+    return DownloadStatusResponse.model_validate(admin_service.get_download_status())
+
+
+@router.post("/models/activate", response_model=RuntimeModelsResponse, tags=["models"])
+def activate_model(
+    payload: ModelActivateRequest,
+    identity: RequestIdentity = Depends(require_request_identity),
+    service: QueuedInferenceService = Depends(get_inference_service),
+    admin_service: ModelAdminService = Depends(get_model_admin_service),
+) -> RuntimeModelsResponse:
+    _enforce_allowed_caller(identity=identity, service=service)
+    _enforce_admin_user(identity)
+    try:
+        result = admin_service.activate_model(payload.model_name)
+        return RuntimeModelsResponse.model_validate(result)
+    except ModelAdminError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error

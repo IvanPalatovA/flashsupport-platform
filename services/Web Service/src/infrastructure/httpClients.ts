@@ -5,6 +5,7 @@ import { Settings } from "./config";
 export interface UpstreamClients {
   chatOrchestrator: AxiosInstance;
   ragEngine: AxiosInstance;
+  llmRuntime: AxiosInstance;
   knowledgePipeline: AxiosInstance;
 }
 
@@ -19,6 +20,13 @@ export function buildUpstreamClients(settings: Settings): UpstreamClients {
     }),
     ragEngine: axios.create({
       baseURL: settings.ragEngineUrl,
+      timeout: settings.requestTimeoutSeconds * 1000,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }),
+    llmRuntime: axios.create({
+      baseURL: settings.llmRuntimeUrl,
       timeout: settings.requestTimeoutSeconds * 1000,
       headers: {
         "Content-Type": "application/json",

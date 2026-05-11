@@ -1,7 +1,15 @@
 import { NextFunction, Request, Response, Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 
-import { asBoolean, asOperatorAction, asOptionalString, asPositiveInt, asString, asUserRole } from "./models";
+import {
+  asBoolean,
+  asOperatorAction,
+  asOptionalString,
+  asPositiveInt,
+  asRequiredPositiveInt,
+  asString,
+  asUserRole,
+} from "./models";
 import { Settings } from "./infrastructure/config";
 import { WebService, WebServiceError } from "./services";
 
@@ -217,7 +225,7 @@ export function createRouter(service: WebService, settings: Settings): Router {
   router.post(
     "/operator/knowledge-requests",
     asyncHandler(async (req, res) => {
-      const chatId = asString(req.body?.chat_id, "chat_id", 2, 128);
+      const chatId = asOptionalString(req.body?.chat_id, "chat_id", 128);
       const question = asOptionalString(req.body?.question, "question", 4000);
       const answer = asOptionalString(req.body?.answer, "answer", 4000);
       const payload = await service.createKnowledgeRequest(getSessionId(req, settings), chatId, question, answer);
@@ -256,6 +264,169 @@ export function createRouter(service: WebService, settings: Settings): Router {
     asyncHandler(async (req, res) => {
       const accounts = await service.listAccounts(getSessionId(req, settings));
       res.status(200).json({ accounts });
+    }),
+  );
+
+  router.get(
+    "/admin/llm/models",
+    asyncHandler(async (req, res) => {
+      const payload = await service.listRuntimeModels(getSessionId(req, settings));
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.get(
+    "/admin/llm/models/download-status",
+    asyncHandler(async (req, res) => {
+      const payload = await service.getRuntimeModelDownloadStatus(getSessionId(req, settings));
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/llm/models/download",
+    asyncHandler(async (req, res) => {
+      const huggingfaceUrl = asString(req.body?.huggingface_url, "huggingface_url", 10, 2000);
+      const huggingfaceToken = asOptionalString(req.body?.huggingface_token, "huggingface_token", 512);
+      const modelName = asOptionalString(req.body?.model_name, "model_name", 128);
+      const payload = await service.startRuntimeModelDownload(
+        getSessionId(req, settings),
+        huggingfaceUrl,
+        huggingfaceToken,
+        modelName,
+      );
+      res.status(202).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/llm/models/activate",
+    asyncHandler(async (req, res) => {
+      const modelName = asString(req.body?.model_name, "model_name", 1, 128);
+      const payload = await service.activateRuntimeModel(getSessionId(req, settings), modelName);
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.get(
+    "/admin/rag/embedding-models",
+    asyncHandler(async (req, res) => {
+      const payload = await service.listEmbeddingModels(getSessionId(req, settings));
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.get(
+    "/admin/rag/embedding-models/download-status",
+    asyncHandler(async (req, res) => {
+      const payload = await service.getEmbeddingModelDownloadStatus(getSessionId(req, settings));
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/rag/embedding-models/download",
+    asyncHandler(async (req, res) => {
+      const huggingfaceUrl = asString(req.body?.huggingface_url, "huggingface_url", 2, 2000);
+      const huggingfaceToken = asOptionalString(req.body?.huggingface_token, "huggingface_token", 512);
+      const modelName = asOptionalString(req.body?.model_name, "model_name", 128);
+      const payload = await service.startEmbeddingModelDownload(
+        getSessionId(req, settings),
+        huggingfaceUrl,
+        huggingfaceToken,
+        modelName,
+      );
+      res.status(202).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/rag/embedding-models/activate",
+    asyncHandler(async (req, res) => {
+      const modelName = asString(req.body?.model_name, "model_name", 1, 128);
+      const payload = await service.activateEmbeddingModel(getSessionId(req, settings), modelName);
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.get(
+    "/admin/rag/knowledge-bases",
+    asyncHandler(async (req, res) => {
+      const bases = await service.listKnowledgeBases(getSessionId(req, settings));
+      res.status(200).json({ bases });
+    }),
+  );
+
+  router.post(
+    "/admin/rag/knowledge-bases",
+    asyncHandler(async (req, res) => {
+      const name = asString(req.body?.name, "name", 1, 160);
+      const description = asOptionalString(req.body?.description, "description", 1000);
+      const documentsRaw = Array.isArray(req.body?.documents) ? req.body.documents : [];
+      const documents = documentsRaw.map((item: unknown) => {
+        const raw = item as Record<string, unknown>;
+        return {
+          title: asString(raw.title, "document.title", 1, 300),
+          text: asString(raw.text, "document.text", 1, 200000),
+          source: asOptionalString(raw.source, "document.source", 2000),
+        };
+      });
+      const payload = await service.createKnowledgeBase(getSessionId(req, settings), { name, description, documents });
+      res.status(201).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/rag/knowledge-bases/:knowledgeBaseId/activate",
+    asyncHandler(async (req, res) => {
+      const knowledgeBaseId = asRequiredPositiveInt(req.params.knowledgeBaseId, "knowledgeBaseId");
+      const payload = await service.activateKnowledgeBase(getSessionId(req, settings), knowledgeBaseId);
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.delete(
+    "/admin/rag/knowledge-bases/:knowledgeBaseId",
+    asyncHandler(async (req, res) => {
+      const knowledgeBaseId = asRequiredPositiveInt(req.params.knowledgeBaseId, "knowledgeBaseId");
+      const adminPassword = asString(req.body?.admin_password, "admin_password", 8, 256);
+      await service.deleteKnowledgeBase(getSessionId(req, settings), knowledgeBaseId, adminPassword);
+      res.status(204).send();
+    }),
+  );
+
+  router.get(
+    "/admin/rag/knowledge-bases/:knowledgeBaseId/documents",
+    asyncHandler(async (req, res) => {
+      const knowledgeBaseId = asRequiredPositiveInt(req.params.knowledgeBaseId, "knowledgeBaseId");
+      const documents = await service.listKnowledgeBaseDocuments(getSessionId(req, settings), knowledgeBaseId);
+      res.status(200).json({ documents });
+    }),
+  );
+
+  router.post(
+    "/admin/rag/knowledge-bases/:knowledgeBaseId/documents",
+    asyncHandler(async (req, res) => {
+      const knowledgeBaseId = asRequiredPositiveInt(req.params.knowledgeBaseId, "knowledgeBaseId");
+      const title = asString(req.body?.title, "title", 1, 300);
+      const text = asString(req.body?.text, "text", 1, 200000);
+      const source = asOptionalString(req.body?.source, "source", 2000);
+      const document = await service.addKnowledgeBaseDocument(getSessionId(req, settings), knowledgeBaseId, {
+        title,
+        text,
+        source,
+      });
+      res.status(201).json(document);
+    }),
+  );
+
+  router.delete(
+    "/admin/rag/knowledge-bases/:knowledgeBaseId/documents/:documentId",
+    asyncHandler(async (req, res) => {
+      const knowledgeBaseId = asRequiredPositiveInt(req.params.knowledgeBaseId, "knowledgeBaseId");
+      const documentId = asRequiredPositiveInt(req.params.documentId, "documentId");
+      await service.deleteKnowledgeBaseDocument(getSessionId(req, settings), knowledgeBaseId, documentId);
+      res.status(204).send();
     }),
   );
 

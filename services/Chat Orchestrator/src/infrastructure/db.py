@@ -127,6 +127,44 @@ def ensure_schema() -> None:
         "CREATE INDEX IF NOT EXISTS idx_chat_status_history_chat_id ON chat_status_history(chat_id)",
         "CREATE INDEX IF NOT EXISTS idx_operator_queue_chat_id ON operator_queue(chat_id)",
         "CREATE INDEX IF NOT EXISTS idx_specialist_queue_chat_id ON specialist_queue(chat_id)",
+        # Backward-compatible schema upgrades for previously initialized databases.
+        "ALTER TABLE chats ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'",
+        "ALTER TABLE chats ADD COLUMN IF NOT EXISTS updated_by TEXT",
+        "ALTER TABLE chats ADD COLUMN IF NOT EXISTS note TEXT",
+        "ALTER TABLE chats ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        "ALTER TABLE chats ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS recipient_role TEXT NOT NULL DEFAULT 'system'",
+        "ALTER TABLE operator_queue ADD COLUMN IF NOT EXISTS sender_role TEXT NOT NULL DEFAULT 'registered_user'",
+        "ALTER TABLE operator_queue ADD COLUMN IF NOT EXISTS sender_id TEXT NOT NULL DEFAULT 'unknown'",
+        "ALTER TABLE operator_queue ADD COLUMN IF NOT EXISTS text TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE operator_queue ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE operator_queue ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        "ALTER TABLE specialist_queue ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE specialist_queue ADD COLUMN IF NOT EXISTS decision TEXT",
+        "ALTER TABLE specialist_queue ADD COLUMN IF NOT EXISTS specialist_id TEXT",
+        "ALTER TABLE specialist_queue ADD COLUMN IF NOT EXISTS comment TEXT",
+        "ALTER TABLE specialist_queue ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ",
+        "ALTER TABLE specialist_queue ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        """
+        DO $$
+        DECLARE
+            constraint_name TEXT;
+            table_name TEXT;
+        BEGIN
+            FOR constraint_name, table_name IN
+                SELECT c.conname, cls.relname
+                FROM pg_constraint c
+                JOIN pg_class cls ON cls.oid = c.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace
+                WHERE c.contype = 'c'
+                  AND nsp.nspname = current_schema()
+                  AND cls.relname IN ('chats', 'chat_status_history', 'operator_queue', 'specialist_queue')
+            LOOP
+                EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', table_name, constraint_name);
+            END LOOP;
+        END
+        $$;
+        """,
     ]
     with get_engine().begin() as conn:
         for stmt in statements:
