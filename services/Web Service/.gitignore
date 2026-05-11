@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+
+# Local environment files
+.env
+.env.*
+
+# Tracked environment templates
+!.env.example
+
+# Private keys
+*.pem
+!public.pem
+
+# Environment files
+.env.dev
+.env.prod

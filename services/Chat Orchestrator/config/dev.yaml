@@ -1,0 +1,20 @@
+# Chat Orchestrator - Development Configuration
+CHAT_ORCHESTRATOR_ENV: dev
+
+# Server settings
+APP_HOST: "0.0.0.0"
+APP_PORT: 8090
+
+# Database
+DATABASE_URL: "postgresql+psycopg://flash_admin:dev_secret_9x7k@postgres:5432/flash_support"
+
+# Auth settings for demo
+AUTH:
+  skip_jwt_validation: true
+  allow_anonymous_services: true
+  demo_mode: true
+
+# Service endpoints
+RAG_ENGINE_URL: "http://rag-engine:8080"
+LLM_RUNTIME_URL: "http://llm-runtime:8100"
+AUTH_SERVICE_URL: "http://auth-service:8070"

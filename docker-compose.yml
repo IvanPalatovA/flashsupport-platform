@@ -1,0 +1,161 @@
+﻿services:
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend
+
+  auth-service:
+    build:
+      context: ./services/Auth Service
+      dockerfile: Dockerfile
+    env_file:
+      - .env.public.dev
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8070:8070"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8070/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+      - frontend
+
+  rag-engine:
+    build:
+      context: ./services/RAG Engine
+      dockerfile: Dockerfile
+    env_file:
+      - .env.public.dev
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  llm-runtime:
+    build:
+      context: ./services/LLM Runtime
+      dockerfile: Dockerfile
+    env_file:
+      - .env.public.dev
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      rag-engine:
+        condition: service_healthy
+    ports:
+      - "8100:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health', timeout=5).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  chat-orchestrator:
+    build:
+      context: ./services/Chat Orchestrator
+      dockerfile: Dockerfile
+    env_file:
+      - .env.public.dev
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      rag-engine:
+        condition: service_healthy
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+      - frontend
+
+  knowledge-pipeline:
+    build:
+      context: ./services/Knowledge Pipeline
+      dockerfile: Dockerfile
+    env_file:
+      - .env.public.dev
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8085/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+# ... (Р В Р вЂ Р РЋР С“Р В Р’Вµ Р РЋР С“Р В Р’ВµР РЋР вЂљР В Р вЂ Р В РЎвЂР РЋР С“Р РЋРІР‚в„– Р В Р вЂ Р РЋРІР‚в„–Р РЋРІвЂљВ¬Р В Р’Вµ Р В Р’В±Р В Р’ВµР В Р’В· Р В РЎвЂР В Р’В·Р В РЎВР В Р’ВµР В Р вЂ¦Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В РІвЂћвЂ“) ...
+
+  web-service:
+    build:
+      context: ./services/Web Service
+      dockerfile: Dockerfile
+    env_file:
+      - .env.public.dev
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      chat-orchestrator:
+        condition: service_healthy
+    ports:
+      - "8060:80"
+    networks:
+      - frontend
+
+volumes:
+  pgdata:
+
+networks:
+  backend:
+    driver: bridge
+  frontend:
+    driver: bridge
+
+
+
+
+

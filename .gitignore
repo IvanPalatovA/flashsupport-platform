@@ -1,0 +1,76 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# macOS folders
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# VS Code testing
+.vscode-test/
+
+# Editor/OS temp files
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# для секретов
+*.env
+*.env.*
+!/.env
+!/.env.*
+
+# Allow example env files
+!.env.example
+
+# Python caches and local envs
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+node_modules/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+.env.*
+*.pem
+*.key
+*.log
+.DS_Store
+Thumbs.db
+docker-compose.override.yml
+*.sqlite
+*.db
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/

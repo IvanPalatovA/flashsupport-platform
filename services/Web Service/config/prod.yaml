@@ -1,0 +1,5 @@
+host: 0.0.0.0
+port: 8060
+log_level: INFO
+cookie_secret: replace_me_with_long_random_cookie_secret
+session_cookie_secure: true
