@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from infrastructure.db import ensure_schema
 from infrastructure.config import get_settings
 from routes import router
 
@@ -10,6 +11,7 @@ from routes import router
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     get_settings()
+    ensure_schema()
     yield
 
 

@@ -33,6 +33,23 @@ services:
       timeout: 5s
       retries: 10
 
+  chat-db:
+    image: postgres:16.4
+    container_name: flashsupport-chat-db
+    environment:
+      POSTGRES_DB: ${CHAT_POSTGRES_DB:-flashsupport_chat}
+      POSTGRES_USER: ${CHAT_POSTGRES_USER:-flashsupport_chat}
+      POSTGRES_PASSWORD: ${CHAT_POSTGRES_PASSWORD:-flashsupport_chat}
+    volumes:
+      - flashsupport-chat-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CHAT_POSTGRES_USER:-flashsupport_chat} -d ${CHAT_POSTGRES_DB:-flashsupport_chat}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - chat-orchestrator-private
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: flashsupport-postgres
@@ -102,6 +119,11 @@ services:
         condition: service_healthy
       auth-service:
         condition: service_healthy
+      chat-db:
+        condition: service_healthy
+    networks:
+      - default
+      - chat-orchestrator-private
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health').read()"]
       interval: 10s
@@ -131,4 +153,9 @@ services:
 
 volumes:
   flashsupport-auth-db-data:
+  flashsupport-chat-db-data:
   flashsupport-postgres-data:
+
+networks:
+  chat-orchestrator-private:
+    internal: true

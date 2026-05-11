@@ -6,7 +6,7 @@ Chat Orchestrator is responsible for message control in FlashSupport and works o
 
 - checks whether one role can send a message to another role;
 - validates `user access JWT` and `service access JWT` for all business endpoints;
-- stores message history and events through external Persistence API (DB is not embedded here);
+- stores message history, events and queues in its own PostgreSQL database;
 - forwards user requests to `RAG Engine`;
 - requests its own service JWT from `Auth Service` via Signed Assertion and refreshes it before expiry;
 - escalates chats to operator queue if user asks for human help;
@@ -36,19 +36,17 @@ All business endpoints (except `GET /health`) require:
 - `X-Service-Authorization: Bearer <service_access_token>`
 - `X-Service-Name: <service_id>`
 
-### Persistence API contract used by this service
+### Embedded persistence
 
-All history/queue operations are proxied by HTTP requests to `PERSISTENCE_API_URL`:
+All chat history and queue operations are persisted directly by this service into local PostgreSQL tables:
 
-- `POST /v1/chats/messages`
-- `POST /v1/chats/events`
-- `POST /v1/chats/status`
-- `POST /v1/queues/operator`
-- `POST /v1/queues/specialist`
-- `POST /v1/queues/specialist/review`
-- `POST /v1/knowledge/updates`
-
-This service does not include SQL database logic on purpose.
+- `chats`
+- `chat_messages`
+- `chat_events`
+- `chat_status_history`
+- `operator_queue`
+- `specialist_queue`
+- `knowledge_base_updates`
 
 ## Environment
 
@@ -56,7 +54,7 @@ Main required variables:
 
 - `CHAT_ORCHESTRATOR_ENV` (`dev` or `prod`)
 - `RAG_ENGINE_URL`
-- `PERSISTENCE_API_URL`
+- `DATABASE_URL`
 - `DEFAULT_TOP_K`
 - `HTTP_TIMEOUT_SECONDS`
 - `AUTH_SERVICE_URL`

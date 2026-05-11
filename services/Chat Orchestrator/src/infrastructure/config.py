@@ -16,7 +16,7 @@ class Settings(BaseModel):
     port: int
     log_level: str
     rag_engine_url: str
-    persistence_api_url: str
+    database_url: str
     default_top_k: int = Field(ge=1, le=50)
     http_timeout_seconds: float = Field(gt=0)
     auth_service_url: str
@@ -110,11 +110,11 @@ def get_settings() -> Settings:
         "port": int(_get_from_env_or_yaml(env_name, os.getenv("APP_PORT"), data, "port")),
         "log_level": _get_from_env_or_yaml(env_name, os.getenv("LOG_LEVEL"), data, "log_level"),
         "rag_engine_url": _get_from_env_or_yaml(env_name, os.getenv("RAG_ENGINE_URL"), data, "rag_engine_url"),
-        "persistence_api_url": _get_from_env_or_yaml(
+        "database_url": _get_from_env_or_yaml(
             env_name,
-            os.getenv("PERSISTENCE_API_URL"),
+            os.getenv("DATABASE_URL"),
             data,
-            "persistence_api_url",
+            "database_url",
         ),
         "default_top_k": int(_get_from_env_or_yaml(env_name, os.getenv("DEFAULT_TOP_K"), data, "default_top_k")),
         "http_timeout_seconds": float(

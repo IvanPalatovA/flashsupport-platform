@@ -5,7 +5,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci --include=dev
 
 COPY tsconfig.json tsconfig.server.json ./
 COPY src ./src

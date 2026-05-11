@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 from typing import Any, cast
+from uuid import uuid4
 
 import httpx
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from domain import ChatStatus, MessageEntity, RAGResultEntity, Role, SpecialistDecision
 from infrastructure.auth_client import AuthClientError, ServiceTokenProvider
@@ -24,23 +28,48 @@ def _safe_json_object(response: httpx.Response) -> dict[str, Any]:
 	return cast(dict[str, Any], payload)
 
 
-class PersistenceApiRepository:
-	def __init__(self, base_url: str, timeout_seconds: float) -> None:
-		self._base_url = base_url.rstrip("/")
-		self._timeout_seconds = timeout_seconds
+class ChatPersistenceRepository:
+	def __init__(self, session: Session) -> None:
+		self._session = session
 
-	def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-		url = f"{self._base_url}{path}"
-		try:
-			response = httpx.post(url, json=payload, timeout=self._timeout_seconds)
-			response.raise_for_status()
-			return _safe_json_object(response)
-		except httpx.HTTPError as error:
-			raise UpstreamServiceError(f"Persistence API request failed: {path}") from error
+	def _ensure_chat_exists(self, chat_id: str) -> None:
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO chats (chat_id)
+				VALUES (:chat_id)
+				ON CONFLICT (chat_id) DO NOTHING
+				"""
+			),
+			{"chat_id": chat_id},
+		)
 
 	def save_message(self, message: MessageEntity) -> None:
-		self._post(
-			"/v1/chats/messages",
+		self._ensure_chat_exists(message.chat_id)
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO chat_messages (
+					message_id,
+					chat_id,
+					sender_role,
+					sender_id,
+					recipient_role,
+					text,
+					created_at
+				)
+				VALUES (
+					:message_id,
+					:chat_id,
+					:sender_role,
+					:sender_id,
+					:recipient_role,
+					:text,
+					:created_at
+				)
+				ON CONFLICT (message_id) DO NOTHING
+				"""
+			),
 			{
 				"message_id": message.message_id,
 				"chat_id": message.chat_id,
@@ -48,55 +77,87 @@ class PersistenceApiRepository:
 				"sender_id": message.sender_id,
 				"recipient_role": message.recipient_role.value,
 				"text": message.text,
-				"created_at": message.created_at.isoformat(),
+				"created_at": message.created_at,
 			},
 		)
 
 	def save_event(self, chat_id: str, event_type: str, payload: dict[str, object]) -> None:
-		self._post(
-			"/v1/chats/events",
-			{
-				"chat_id": chat_id,
-				"event_type": event_type,
-				"payload": payload,
-			},
+		self._ensure_chat_exists(chat_id)
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO chat_events (chat_id, event_type, payload)
+				VALUES (:chat_id, :event_type, CAST(:payload AS JSONB))
+				"""
+			),
+			{"chat_id": chat_id, "event_type": event_type, "payload": json.dumps(payload)},
 		)
 
 	def update_chat_status(self, chat_id: str, status: ChatStatus, actor_id: str, note: str | None) -> None:
-		self._post(
-			"/v1/chats/status",
-			{
-				"chat_id": chat_id,
-				"status": status.value,
-				"actor_id": actor_id,
-				"note": note,
-			},
+		self._ensure_chat_exists(chat_id)
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO chats (chat_id, status, updated_by, note)
+				VALUES (:chat_id, :status, :actor_id, :note)
+				ON CONFLICT (chat_id)
+				DO UPDATE SET
+					status = EXCLUDED.status,
+					updated_by = EXCLUDED.updated_by,
+					note = EXCLUDED.note,
+					updated_at = NOW()
+				"""
+			),
+			{"chat_id": chat_id, "status": status.value, "actor_id": actor_id, "note": note},
+		)
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO chat_status_history (chat_id, status, actor_id, note)
+				VALUES (:chat_id, :status, :actor_id, :note)
+				"""
+			),
+			{"chat_id": chat_id, "status": status.value, "actor_id": actor_id, "note": note},
 		)
 
-	def enqueue_operator_request(self, chat_id: str, sender_role: Role, sender_id: str, text: str) -> str | None:
-		data = self._post(
-			"/v1/queues/operator",
+	def enqueue_operator_request(self, chat_id: str, sender_role: Role, sender_id: str, text_value: str) -> str | None:
+		self._ensure_chat_exists(chat_id)
+		queue_item_id = f"opq-{uuid4()}"
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO operator_queue (queue_item_id, chat_id, sender_role, sender_id, text)
+				VALUES (:queue_item_id, :chat_id, :sender_role, :sender_id, :text)
+				"""
+			),
 			{
+				"queue_item_id": queue_item_id,
 				"chat_id": chat_id,
 				"sender_role": sender_role.value,
 				"sender_id": sender_id,
-				"text": text,
+				"text": text_value,
 			},
 		)
-		queue_item_id = data.get("queue_item_id")
-		return str(queue_item_id) if queue_item_id is not None else None
+		return queue_item_id
 
 	def enqueue_specialist_review(self, chat_id: str, operator_id: str, note: str) -> str | None:
-		data = self._post(
-			"/v1/queues/specialist",
+		self._ensure_chat_exists(chat_id)
+		queue_item_id = f"spq-{uuid4()}"
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO specialist_queue (queue_item_id, chat_id, operator_id, note)
+				VALUES (:queue_item_id, :chat_id, :operator_id, :note)
+				"""
+			),
 			{
+				"queue_item_id": queue_item_id,
 				"chat_id": chat_id,
 				"operator_id": operator_id,
 				"note": note,
 			},
 		)
-		queue_item_id = data.get("queue_item_id")
-		return str(queue_item_id) if queue_item_id is not None else None
+		return queue_item_id
 
 	def finalize_specialist_review(
 		self,
@@ -106,8 +167,20 @@ class PersistenceApiRepository:
 		decision: SpecialistDecision,
 		comment: str | None,
 	) -> None:
-		self._post(
-			"/v1/queues/specialist/review",
+		self._ensure_chat_exists(chat_id)
+		self._session.execute(
+			text(
+				"""
+				UPDATE specialist_queue
+				SET
+					status = 'reviewed',
+					decision = :decision,
+					specialist_id = :specialist_id,
+					comment = :comment,
+					reviewed_at = NOW()
+				WHERE queue_item_id = :queue_item_id AND chat_id = :chat_id
+				"""
+			),
 			{
 				"queue_item_id": queue_item_id,
 				"chat_id": chat_id,
@@ -124,8 +197,14 @@ class PersistenceApiRepository:
 		specialist_id: str,
 		comment: str | None,
 	) -> None:
-		self._post(
-			"/v1/knowledge/updates",
+		self._ensure_chat_exists(chat_id)
+		self._session.execute(
+			text(
+				"""
+				INSERT INTO knowledge_base_updates (queue_item_id, chat_id, specialist_id, comment)
+				VALUES (:queue_item_id, :chat_id, :specialist_id, :comment)
+				"""
+			),
 			{
 				"queue_item_id": queue_item_id,
 				"chat_id": chat_id,

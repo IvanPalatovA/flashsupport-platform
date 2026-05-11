@@ -1,10 +1,12 @@
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy.orm import Session
 
 from infrastructure.auth_client import ServiceTokenProvider
 from infrastructure.config import Settings, get_settings
-from infrastructure.repositories import PersistenceApiRepository, RagEngineRepository, UpstreamServiceError
+from infrastructure.db import get_session
+from infrastructure.repositories import ChatPersistenceRepository, RagEngineRepository, UpstreamServiceError
 from infrastructure.security import AuthTokenError, AuthTokenVerifier, RequestIdentity
 from models import (
 	AccessCheckRequest,
@@ -68,11 +70,9 @@ def _enforce_actor_identity(identity: RequestIdentity, actor_id: str, required_r
 def get_orchestrator_service(
 	settings: Settings = Depends(get_settings),
 	token_provider: ServiceTokenProvider = Depends(get_service_token_provider),
+	session: Session = Depends(get_session),
 ) -> ChatOrchestratorService:
-	persistence = PersistenceApiRepository(
-		base_url=settings.persistence_api_url,
-		timeout_seconds=settings.http_timeout_seconds,
-	)
+	persistence = ChatPersistenceRepository(session=session)
 	rag_engine = RagEngineRepository(
 		base_url=settings.rag_engine_url,
 		timeout_seconds=settings.http_timeout_seconds,

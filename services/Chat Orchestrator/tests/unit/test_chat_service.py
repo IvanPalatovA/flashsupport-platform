@@ -101,7 +101,7 @@ def build_service() -> tuple[ChatOrchestratorService, FakePersistence, FakeRagEn
             port=8090,
             log_level="INFO",
             rag_engine_url="http://localhost:8080",
-            persistence_api_url="http://localhost:8091",
+            database_url="postgresql+psycopg://flashsupport_chat:flashsupport_chat@localhost:5432/flashsupport_chat",
             default_top_k=3,
             http_timeout_seconds=5,
             auth_service_url="http://localhost:8070",
