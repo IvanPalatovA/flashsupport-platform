@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 type Role = "registered_user" | "operator" | "admin";
@@ -39,6 +39,22 @@ interface ChatMessage {
   text: string;
   createdAt: string;
 }
+
+type WebEvent =
+  | {
+      type: "connected";
+      profile: Profile;
+      chats: ChatSummary[];
+    }
+  | {
+      type: "chat_updated";
+      chat: ChatSummary;
+      messages: ChatMessage[];
+    }
+  | {
+      type: "chat_deleted";
+      chatId: string;
+    };
 
 interface KnowledgeRequest {
   requestId: string;
@@ -193,6 +209,10 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+function sortChats(chats: ChatSummary[]): ChatSummary[] {
+  return [...chats].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+}
+
 function friendlyRole(role: Role): string {
   if (role === "registered_user") {
     return "User";
@@ -218,6 +238,7 @@ function App(): JSX.Element {
 
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  const selectedChatIdRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageText, setMessageText] = useState("");
   const [chatActivity, setChatActivity] = useState<{ chatId: string; label: string } | null>(null);
@@ -461,20 +482,65 @@ function App(): JSX.Element {
   }, [selectedChatId]);
 
   useEffect(() => {
-    if (!profile || profile.role === "admin") {
+    selectedChatIdRef.current = selectedChatId;
+  }, [selectedChatId]);
+
+  useEffect(() => {
+    if (!profile) {
       return;
     }
 
-    const interval = window.setInterval(() => {
-      void loadChats({ silent: true });
-      if (selectedChatId) {
-        void loadMessages(selectedChatId, { silent: true });
-      }
-    }, 1500);
+    const source = new EventSource("/api/events", { withCredentials: true });
 
-    return () => window.clearInterval(interval);
+    source.onmessage = (event: MessageEvent<string>) => {
+      let payload: WebEvent;
+      try {
+        payload = JSON.parse(event.data) as WebEvent;
+      } catch {
+        return;
+      }
+      if (payload.type === "connected") {
+        setProfile(payload.profile);
+        setChats(payload.chats);
+        const currentChatId = selectedChatIdRef.current;
+        if (!currentChatId && payload.chats.length > 0) {
+          setSelectedChatId(payload.chats[0].chatId);
+        }
+        return;
+      }
+
+      if (payload.type === "chat_updated") {
+        const currentChatId = selectedChatIdRef.current;
+        setChats((current) => {
+          const withoutUpdated = current.filter((chat) => chat.chatId !== payload.chat.chatId);
+          return sortChats([...withoutUpdated, payload.chat]);
+        });
+        if (!currentChatId) {
+          setSelectedChatId(payload.chat.chatId);
+        }
+        if (!currentChatId || payload.chat.chatId === currentChatId) {
+          setMessages(payload.messages);
+        }
+        return;
+      }
+
+      if (payload.type === "chat_deleted") {
+        const currentChatId = selectedChatIdRef.current;
+        setChats((current) => current.filter((chat) => chat.chatId !== payload.chatId));
+        if (payload.chatId === currentChatId) {
+          setSelectedChatId(null);
+          setMessages([]);
+        }
+      }
+    };
+
+    source.onerror = () => {
+      setErrorNotice("Realtime chat stream disconnected; reconnecting...");
+    };
+
+    return () => source.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.role, selectedChatId]);
+  }, [profile?.role]);
 
   useEffect(() => {
     if (!profile || profile.role !== "admin") {
@@ -1522,7 +1588,12 @@ function App(): JSX.Element {
 
         {profile.role === "admin" && (
           <>
-            <div className="card admin-wide">
+            <details className="admin-section" open>
+              <summary>
+                Knowledge Review <span className="admin-meta">{knowledgeRequests.length} requests</span>
+              </summary>
+              <div className="admin-section-body">
+                <div className="card admin-wide">
               <h3>Knowledge Review</h3>
               <div style={{ display: "grid", gap: 8 }}>
                 {knowledgeRequests.map((request) => (
@@ -1550,9 +1621,16 @@ function App(): JSX.Element {
                 ))}
                 {knowledgeRequests.length === 0 && <p className="muted">No pending requests</p>}
               </div>
-            </div>
+                </div>
+              </div>
+            </details>
 
-            <div className="card admin-compact">
+            <details className="admin-section" open>
+              <summary>
+                Account Control <span className="admin-meta">{accounts.length} accounts</span>
+              </summary>
+              <div className="admin-section-body">
+                <div className="card admin-compact">
               <h3>Account Control</h3>
               <div className="action-row" style={{ marginBottom: 12 }}>
                 <input
@@ -1590,9 +1668,16 @@ function App(): JSX.Element {
                 ))}
                 {accounts.length === 0 && <p className="muted">No known accounts yet</p>}
               </div>
-            </div>
+                </div>
+              </div>
+            </details>
 
-            <div className="card admin-wide">
+            <details className="admin-section" open>
+              <summary>
+                LLM Runtime <span className="admin-meta">{activeRuntimeModel || "not set"}</span>
+              </summary>
+              <div className="admin-section-body">
+                <div className="card admin-wide">
               <h3>LLM Runtime Models</h3>
               <p>Скачивание модели из Hugging Face и переключение активной модели в реальном времени.</p>
               <p className="muted">
@@ -1689,9 +1774,16 @@ function App(): JSX.Element {
                 ))}
                 {runtimeModels.length === 0 && <p className="muted">No runtime models available</p>}
               </div>
-            </div>
+                </div>
+              </div>
+            </details>
 
-            <div className="card admin-wide">
+            <details className="admin-section">
+              <summary>
+                Embedding Models <span className="admin-meta">{activeEmbeddingModel || "not set"}</span>
+              </summary>
+              <div className="admin-section-body">
+                <div className="card admin-wide">
               <h3>RAG Embedding Models</h3>
               <input
                 value={embeddingHuggingfaceUrl}
@@ -1760,9 +1852,16 @@ function App(): JSX.Element {
                 ))}
                 {embeddingModels.length === 0 && <p className="muted">No embedding models available</p>}
               </div>
-            </div>
+                </div>
+              </div>
+            </details>
 
-            <div className="card admin-wide">
+            <details className="admin-section" open>
+              <summary>
+                Knowledge Bases <span className="admin-meta">{knowledgeBases.length} bases</span>
+              </summary>
+              <div className="admin-section-body">
+                <div className="card admin-wide">
               <h3>RAG Knowledge Bases</h3>
               <div className="action-row">
                 <input
@@ -1900,7 +1999,9 @@ function App(): JSX.Element {
                   Delete Selected Base
                 </button>
               </div>
-            </div>
+                </div>
+              </div>
+            </details>
           </>
         )}
       </section>

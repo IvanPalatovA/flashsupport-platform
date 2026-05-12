@@ -30,6 +30,29 @@ interface PersistedAdminSettings {
   operatorCallThresholdMessages?: number;
 }
 
+type WebEvent =
+  | {
+      type: "connected";
+      profile: SessionProfile;
+      chats: ChatSummary[];
+    }
+  | {
+      type: "chat_updated";
+      chat: ChatSummary;
+      messages: ChatMessage[];
+    }
+  | {
+      type: "chat_deleted";
+      chatId: string;
+    };
+
+interface EventSubscriber {
+  subscriberId: string;
+  userId: string;
+  role: UserRole;
+  send: (event: WebEvent) => void;
+}
+
 interface OrchestratorUserResponse {
   chat_id: string;
   route: DeliveryRoute;
@@ -176,6 +199,7 @@ export class WebService {
   private readonly knowledgeRequests = new Map<string, KnowledgeRequest>();
   private readonly accounts = new Map<string, AccountRecord>();
   private readonly serviceTokenCache = new Map<string, CachedServiceToken>();
+  private readonly eventSubscribers = new Map<string, EventSubscriber>();
   private ragTopK = 3;
   private operatorCallThresholdMessages: number;
 
@@ -389,6 +413,16 @@ export class WebService {
     }
   }
 
+  private canSeeChat(chat: ChatThread, role: UserRole, userId: string): boolean {
+    if (role === "admin") {
+      return true;
+    }
+    if (role === "registered_user") {
+      return chat.ownerUserId === userId;
+    }
+    return role === "operator" && (chat.escalatedToOperator || chat.assignedOperatorId === userId);
+  }
+
   private addMessage(chat: ChatThread, senderRole: ChatMessage["senderRole"], senderId: string, text: string): ChatMessage {
     const message: ChatMessage = {
       messageId: uuidv4(),
@@ -428,6 +462,46 @@ export class WebService {
       preview,
       userMessageCount: this.countUserMessages(chat),
     };
+  }
+
+  private visibleChatsForSession(session: SessionRecord): ChatSummary[] {
+    return [...this.chats.values()]
+      .filter((chat) => this.canSeeChat(chat, session.role, session.userId))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .map((chat) => this.toSummary(chat));
+  }
+
+  private publishChatUpdated(chat: ChatThread): void {
+    const event: WebEvent = {
+      type: "chat_updated",
+      chat: this.toSummary(chat),
+      messages: chat.messages,
+    };
+    for (const subscriber of this.eventSubscribers.values()) {
+      if (this.canSeeChat(chat, subscriber.role, subscriber.userId)) {
+        try {
+          subscriber.send(event);
+        } catch {
+          this.eventSubscribers.delete(subscriber.subscriberId);
+        }
+      }
+    }
+  }
+
+  private publishChatDeleted(chat: ChatThread): void {
+    const event: WebEvent = {
+      type: "chat_deleted",
+      chatId: chat.chatId,
+    };
+    for (const subscriber of this.eventSubscribers.values()) {
+      if (this.canSeeChat(chat, subscriber.role, subscriber.userId)) {
+        try {
+          subscriber.send(event);
+        } catch {
+          this.eventSubscribers.delete(subscriber.subscriberId);
+        }
+      }
+    }
   }
 
   private async callChatOrchestrator<T>(
@@ -541,6 +615,7 @@ export class WebService {
     const chatIds = this.chatsByOwner.get(operatorId) ?? new Set<string>();
     chatIds.add(chatId);
     this.chatsByOwner.set(operatorId, chatIds);
+    this.publishChatUpdated(chat);
     return chat;
   }
 
@@ -616,22 +691,26 @@ export class WebService {
 
   async listChats(sessionId: string | undefined): Promise<ChatSummary[]> {
     const { session } = await this.requireSession(sessionId);
+    return this.visibleChatsForSession(session);
+  }
 
-    let chats: ChatThread[];
-    if (session.role === "registered_user") {
-      const userChatIds = this.chatsByOwner.get(session.userId) ?? new Set<string>();
-      chats = [...userChatIds]
-        .map((chatId) => this.chats.get(chatId))
-        .filter((item): item is ChatThread => item !== undefined);
-    } else if (session.role === "operator") {
-      chats = [...this.chats.values()].filter((chat) => chat.escalatedToOperator || chat.assignedOperatorId === session.userId);
-    } else {
-      chats = [...this.chats.values()];
-    }
-
-    return chats
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-      .map((chat) => this.toSummary(chat));
+  async subscribeEvents(sessionId: string | undefined, send: (event: WebEvent) => void): Promise<() => void> {
+    const { session } = await this.requireSession(sessionId);
+    const subscriberId = uuidv4();
+    this.eventSubscribers.set(subscriberId, {
+      subscriberId,
+      userId: session.userId,
+      role: session.role,
+      send,
+    });
+    send({
+      type: "connected",
+      profile: this.toProfile(session),
+      chats: this.visibleChatsForSession(session),
+    });
+    return () => {
+      this.eventSubscribers.delete(subscriberId);
+    };
   }
 
   async createChat(sessionId: string | undefined, title?: string): Promise<ChatSummary> {
@@ -660,6 +739,7 @@ export class WebService {
     const chatIds = this.chatsByOwner.get(session.userId) ?? new Set<string>();
     chatIds.add(chatId);
     this.chatsByOwner.set(session.userId, chatIds);
+    this.publishChatUpdated(chat);
 
     return this.toSummary(chat);
   }
@@ -707,6 +787,7 @@ export class WebService {
     }
 
     this.addMessage(chat, "registered_user", session.userId, text);
+    this.publishChatUpdated(chat);
 
     let response: OrchestratorUserResponse;
     try {
@@ -721,6 +802,7 @@ export class WebService {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Chat Orchestrator request failed";
       this.addMessage(chat, "system", "web-service", `Message saved, but assistant response failed: ${message}`);
+      this.publishChatUpdated(chat);
       return {
         summary: this.toSummary(chat),
         route: "rag_engine",
@@ -737,6 +819,7 @@ export class WebService {
     }
 
     this.addMessage(chat, response.route === "rag_engine" ? "assistant" : "system", "orchestrator", response.message);
+    this.publishChatUpdated(chat);
 
     return {
       summary: this.toSummary(chat),
@@ -783,6 +866,7 @@ export class WebService {
     chat.escalatedToOperator = true;
     chat.status = response.chat_status;
     chat.updatedAt = this.nowIso();
+    this.publishChatUpdated(chat);
 
     return {
       summary: this.toSummary(chat),
@@ -817,6 +901,7 @@ export class WebService {
     if (response.message && response.message.trim() !== "") {
       this.addMessage(chat, "system", "orchestrator", response.message);
     }
+    this.publishChatUpdated(chat);
 
     return {
       summary: this.toSummary(chat),
@@ -854,6 +939,7 @@ export class WebService {
     }
 
     this.addMessage(chat, "system", "operator", response.message);
+    this.publishChatUpdated(chat);
 
     return {
       summary: this.toSummary(chat),
@@ -869,6 +955,7 @@ export class WebService {
     }
 
     const chat = this.getChatOrThrow(chatId);
+    this.publishChatDeleted(chat);
     this.chats.delete(chatId);
 
     const ownerChats = this.chatsByOwner.get(chat.ownerUserId);

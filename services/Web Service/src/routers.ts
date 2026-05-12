@@ -136,6 +136,35 @@ export function createRouter(service: WebService, settings: Settings): Router {
     }),
   );
 
+  router.get("/events", async (req, res, next) => {
+    try {
+      const sessionId = getSessionId(req, settings);
+      await service.me(sessionId);
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      req.socket.setTimeout(0);
+
+      const send = (event: unknown): void => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+      const unsubscribe = await service.subscribeEvents(sessionId, send);
+      const heartbeat = setInterval(() => {
+        res.write(": heartbeat\n\n");
+      }, 25000);
+
+      req.on("close", () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+        res.end();
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get(
     "/chats",
     asyncHandler(async (req, res) => {
