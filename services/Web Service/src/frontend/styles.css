@@ -7,7 +7,7 @@
   --accent: #f4c900;
   --accent-soft: #fff5a8;
   --line: #e6e6e2;
-  --danger: #111111;
+  --danger: #b00020;
   --radius-xl: 28px;
   --radius-md: 18px;
   --shadow-soft: 0 20px 40px rgba(0, 0, 0, 0.08);
@@ -350,7 +350,7 @@ button:hover {
   border: 1px solid var(--line);
   border-radius: 20px;
   background: #f7f7f3;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .admin-section[open] {
@@ -393,6 +393,37 @@ button:hover {
 
 .admin-section-body {
   padding: 0 14px 14px;
+}
+
+/* make long admin cards scroll internally rather than being clipped */
+.admin-section-body {
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+}
+
+/* modal for destructive confirmations */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.modal {
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 18px;
+  width: min(520px, 92%);
+  box-shadow: 0 18px 40px rgba(0,0,0,0.25);
+}
+.modal h3 {
+  margin: 0 0 8px;
+}
+.btn-danger {
+  background: var(--danger);
+  color: #ffffff;
 }
 
 .admin-section-body > .card {

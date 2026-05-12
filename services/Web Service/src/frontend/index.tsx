@@ -279,7 +279,8 @@ function App(): JSX.Element {
   const [knowledgeBaseDescription, setKnowledgeBaseDescription] = useState("");
   const [knowledgeDocTitle, setKnowledgeDocTitle] = useState("");
   const [knowledgeDocText, setKnowledgeDocText] = useState("");
-  const [deleteKnowledgePassword, setDeleteKnowledgePassword] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmPassword, setDeleteConfirmPassword] = useState("");
 
   const selectedChat = useMemo(
     () => chats.find((item) => item.chatId === selectedChatId) ?? null,
@@ -939,6 +940,34 @@ function App(): JSX.Element {
     }
   };
 
+  const promoteAccount = async (account: AccountRecord): Promise<void> => {
+    const order: Role[] = ["registered_user", "operator", "admin"];
+    const idx = order.indexOf(account.role);
+    if (idx < 0 || idx === order.length - 1) return;
+    await updateRole(account.userId, order[idx + 1]);
+  };
+
+  const demoteAccount = async (account: AccountRecord): Promise<void> => {
+    const order: Role[] = ["registered_user", "operator", "admin"];
+    const idx = order.indexOf(account.role);
+    if (idx <= 0) return;
+    await updateRole(account.userId, order[idx - 1]);
+  };
+
+  const deleteAccount = async (accountId: string): Promise<void> => {
+    clearNotice();
+    try {
+      await api<void>(`/api/admin/accounts/${accountId}`, {
+        method: "DELETE",
+      });
+      await loadAdminData();
+      setNotice("Account deleted");
+      setNoticeError(false);
+    } catch (error) {
+      setErrorNotice((error as Error).message);
+    }
+  };
+
   const saveOperatorThreshold = async (): Promise<void> => {
     if (!profile || profile.role !== "admin") {
       setErrorNotice("Only admin can update app settings");
@@ -1250,11 +1279,25 @@ function App(): JSX.Element {
   };
 
   const deleteKnowledgeBase = async (): Promise<void> => {
+    // preserve original call: open confirmation modal instead
     if (!selectedKnowledgeBaseId) {
       setErrorNotice("Select a knowledge base first");
       return;
     }
-    if (!deleteKnowledgePassword) {
+    setShowDeleteConfirm(true);
+  };
+
+  const closeDeleteModal = (): void => {
+    setShowDeleteConfirm(false);
+    setDeleteConfirmPassword("");
+  };
+
+  const confirmDeleteKnowledgeBase = async (): Promise<void> => {
+    if (!selectedKnowledgeBaseId) {
+      setErrorNotice("Select a knowledge base first");
+      return;
+    }
+    if (!deleteConfirmPassword) {
       setErrorNotice("Admin password is required to delete a knowledge base");
       return;
     }
@@ -1263,9 +1306,10 @@ function App(): JSX.Element {
     try {
       await api<void>(`/api/admin/rag/knowledge-bases/${selectedKnowledgeBaseId}`, {
         method: "DELETE",
-        body: JSON.stringify({ admin_password: deleteKnowledgePassword }),
+        body: JSON.stringify({ admin_password: deleteConfirmPassword }),
       });
-      setDeleteKnowledgePassword("");
+      setDeleteConfirmPassword("");
+      setShowDeleteConfirm(false);
       setSelectedKnowledgeBaseId(null);
       await loadAdminData();
       setNotice("Knowledge base deleted");
@@ -1649,20 +1693,30 @@ function App(): JSX.Element {
                 {accounts.map((account) => (
                   <div key={account.userId} className="card">
                     <p>
-                      <strong>{account.login}</strong> ({account.role})
+                      <strong>{account.login}</strong> <span className="muted">({friendlyRole(account.role)})</span>
                     </p>
+                    <p className="muted">Last updated: {account.updatedAt}</p>
                     <div className="action-row">
                       <button className="btn-ghost" onClick={() => void toggleBlock(account)}>
                         {account.isBlocked ? "Unblock" : "Block"}
+                      </button>
+                      <button className="btn-ghost" onClick={() => void promoteAccount(account)} disabled={account.role === "admin"}>
+                        Promote
+                      </button>
+                      <button className="btn-ghost" onClick={() => void demoteAccount(account)} disabled={account.role === "registered_user"}>
+                        Demote
                       </button>
                       <select
                         value={account.role}
                         onChange={(event) => void updateRole(account.userId, event.target.value as Role)}
                       >
-                        <option value="registered_user">registered_user</option>
-                        <option value="operator">operator</option>
-                        <option value="admin">admin</option>
+                        <option value="registered_user">User</option>
+                        <option value="operator">Operator</option>
+                        <option value="admin">Admin</option>
                       </select>
+                      <button className="btn-danger" onClick={() => void deleteAccount(account.userId)}>
+                        Delete
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -1867,7 +1921,7 @@ function App(): JSX.Element {
                 <input
                   value={ragChunkSize}
                   onChange={(event) => setRagChunkSize(event.target.value)}
-                  placeholder="Chunk window chars"
+                  placeholder="Chunk size"
                   type="number"
                   min={200}
                   max={8000}
@@ -1875,7 +1929,7 @@ function App(): JSX.Element {
                 <input
                   value={ragChunkOverlap}
                   onChange={(event) => setRagChunkOverlap(event.target.value)}
-                  placeholder="Chunk overlap chars"
+                  placeholder="Overlap"
                   type="number"
                   min={0}
                   max={2000}
@@ -1883,7 +1937,7 @@ function App(): JSX.Element {
                 <input
                   value={ragTopK}
                   onChange={(event) => setRagTopK(event.target.value)}
-                  placeholder="Top-K chunks"
+                  placeholder="Top K"
                   type="number"
                   min={1}
                   max={50}
@@ -1989,13 +2043,7 @@ function App(): JSX.Element {
               </div>
 
               <div style={{ marginTop: 12 }}>
-                <input
-                  value={deleteKnowledgePassword}
-                  onChange={(event) => setDeleteKnowledgePassword(event.target.value)}
-                  placeholder="Admin password to delete selected base"
-                  type="password"
-                />
-                <button className="btn-ghost" disabled={!selectedKnowledgeBaseId} onClick={() => void deleteKnowledgeBase()}>
+                <button className="btn-danger" disabled={!selectedKnowledgeBaseId} onClick={() => void deleteKnowledgeBase()}>
                   Delete Selected Base
                 </button>
               </div>
@@ -2003,6 +2051,30 @@ function App(): JSX.Element {
               </div>
             </details>
           </>
+        )}
+        {/* Delete confirmation modal */}
+        {showDeleteConfirm && (
+          <div className="modal-overlay">
+            <div className="modal">
+              <h3>Delete Knowledge Base</h3>
+              <p>Are you sure you want to permanently delete the selected knowledge base? This action cannot be undone.</p>
+              <input
+                value={deleteConfirmPassword}
+                onChange={(e) => setDeleteConfirmPassword(e.target.value)}
+                placeholder="Admin password"
+                type="password"
+                style={{ marginTop: 10, width: "100%" }}
+              />
+              <div className="action-row" style={{ marginTop: 12, justifyContent: "flex-end" }}>
+                <button className="btn-ghost" onClick={() => closeDeleteModal()}>
+                  Cancel
+                </button>
+                <button className="btn-danger" onClick={() => void confirmDeleteKnowledgeBase()}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </section>
     </div>
