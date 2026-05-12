@@ -30,11 +30,12 @@ body {
 }
 
 .app-shell {
-  min-height: 100%;
+  height: 100%;
   padding: 24px;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr) 360px;
   gap: 18px;
+  overflow: hidden;
 }
 
 .panel {
@@ -49,6 +50,8 @@ body {
   flex-direction: column;
   padding: 22px;
   gap: 16px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .brand {
@@ -126,6 +129,8 @@ body {
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 16px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .header {
@@ -290,6 +295,51 @@ button:hover {
   flex-direction: column;
   gap: 14px;
   overflow: auto;
+  min-height: 0;
+}
+
+.admin-shell {
+  grid-template-columns: 300px minmax(0, 1fr);
+}
+
+.admin-shell .sidebar,
+.admin-shell .side-tools {
+  height: calc(100vh - 48px);
+}
+
+.admin-chat-panel {
+  display: none;
+}
+
+.admin-tools {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(340px, 1fr));
+  align-content: start;
+  gap: 16px;
+  padding: 22px;
+}
+
+.admin-tools .admin-wide {
+  grid-column: 1 / -1;
+}
+
+.admin-tools .card {
+  min-width: 0;
+}
+
+.admin-tools input,
+.admin-tools textarea,
+.admin-tools select {
+  width: 100%;
+}
+
+.admin-tools > .card > input,
+.admin-tools > .card > textarea,
+.admin-tools > .card > select,
+.admin-tools .document-form input,
+.admin-tools .document-form textarea {
+  margin-top: 8px;
 }
 
 .card {
@@ -393,10 +443,27 @@ button:hover {
   .app-shell {
     grid-template-columns: 1fr;
     padding: 14px;
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
   }
 
   .main {
     min-height: 62vh;
+  }
+
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-shell .sidebar,
+  .admin-shell .side-tools {
+    height: auto;
+  }
+
+  .admin-tools {
+    grid-column: 1;
+    grid-template-columns: 1fr;
   }
 
   .msg {

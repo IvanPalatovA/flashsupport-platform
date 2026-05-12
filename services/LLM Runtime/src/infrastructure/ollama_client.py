@@ -21,13 +21,22 @@ class OllamaClient:
         self._settings = settings
         self._base_url = settings.ollama_base_url.rstrip("/")
         self._timeout_seconds = settings.ollama_request_timeout_seconds
-        self._active_model = settings.llm_model_name
-        self._system_prompt_path = Path(settings.model_storage_dir).resolve() / "system_prompt.txt"
+        storage_dir = Path(settings.model_storage_dir).resolve()
+        self._active_model_path = storage_dir / "active_model.txt"
+        self._system_prompt_path = storage_dir / "system_prompt.txt"
         self._system_prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        self._active_model = self._load_active_model(settings.llm_model_name)
         self._system_prompt = self._load_system_prompt(settings.llm_system_prompt)
         self._requested_device = self._normalize_device(settings.llm_device)
         self._device = "gpu" if self._requested_device in {"cuda", "mps"} else self._requested_device
         self._model_lock = threading.RLock()
+
+    def _load_active_model(self, default_model: str) -> str:
+        try:
+            model_name = self._active_model_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return default_model
+        return model_name or default_model
 
     def _load_system_prompt(self, default_prompt: str) -> str:
         try:
@@ -79,6 +88,7 @@ class OllamaClient:
             raise OllamaClientError("model name cannot be empty")
         with self._model_lock:
             self._active_model = normalized
+            self._active_model_path.write_text(normalized, encoding="utf-8")
 
     def list_models(self) -> list[str]:
         url = f"{self._base_url}/api/tags"

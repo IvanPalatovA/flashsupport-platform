@@ -26,6 +26,7 @@ export interface Settings {
   serviceTokenAudienceChatOrchestrator: string;
   serviceTokenAudienceRagService: string;
   operatorCallThresholdMessages: number;
+  runtimeSettingsPath: string;
   sessionCookieName: string;
   sessionCookieSecure: boolean;
   sessionTtlSeconds: number;
@@ -224,6 +225,10 @@ export function getSettings(): Settings {
         "operator_call_threshold_messages",
       ),
       "operator_call_threshold_messages",
+    ),
+    runtimeSettingsPath: resolvePath(
+      serviceRoot,
+      getFromEnvOrYaml(envName, process.env.RUNTIME_SETTINGS_PATH, merged, "runtime_settings_path"),
     ),
     sessionCookieName: getFromEnvOrYaml(envName, process.env.SESSION_COOKIE_NAME, merged, "session_cookie_name"),
     sessionCookieSecure: asBool(

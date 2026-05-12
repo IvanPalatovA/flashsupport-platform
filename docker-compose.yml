@@ -88,6 +88,8 @@ services:
         condition: service_started
     ports:
       - "8100:8100"
+    volumes:
+      - flashsupport-llm-runtime-data:/tmp/flashsupport-models
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health').read()"]
       interval: 10s
@@ -152,6 +154,8 @@ services:
       WEB_SERVICE_ENV: ${WEB_SERVICE_ENV:?WEB_SERVICE_ENV is required (dev|prod)}
     ports:
       - "8060:8060"
+    volumes:
+      - flashsupport-web-runtime-data:/app/var
     depends_on:
       rag-service:
         condition: service_healthy
@@ -168,7 +172,9 @@ volumes:
   flashsupport-chat-db-data:
   flashsupport-postgres-data:
   flashsupport-ollama-data:
+  flashsupport-llm-runtime-data:
   flashsupport-rag-embedding-models:
+  flashsupport-web-runtime-data:
 
 networks:
   chat-orchestrator-private:

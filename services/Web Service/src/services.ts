@@ -1,4 +1,6 @@
 import { AxiosError, isAxiosError } from "axios";
+import fs from "node:fs";
+import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 
 import {
@@ -21,6 +23,11 @@ import { AuthTokenError, TokenSecurity, UserAccessClaims } from "./infrastructur
 interface CachedServiceToken {
   token: string;
   expiresAtUnix: number;
+}
+
+interface PersistedAdminSettings {
+  ragTopK?: number;
+  operatorCallThresholdMessages?: number;
 }
 
 interface OrchestratorUserResponse {
@@ -179,7 +186,46 @@ export class WebService {
     private readonly tokenSecurity: TokenSecurity,
     private readonly sessionStore: SessionStore,
   ) {
-    this.operatorCallThresholdMessages = settings.operatorCallThresholdMessages;
+    const persistedSettings = this.loadPersistedAdminSettings();
+    this.ragTopK = this.validInteger(persistedSettings.ragTopK, 1, 50, this.ragTopK);
+    this.operatorCallThresholdMessages = this.validInteger(
+      persistedSettings.operatorCallThresholdMessages,
+      0,
+      100,
+      settings.operatorCallThresholdMessages,
+    );
+  }
+
+  private loadPersistedAdminSettings(): PersistedAdminSettings {
+    try {
+      const raw = fs.readFileSync(this.settings.runtimeSettingsPath, "utf-8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {};
+      }
+      return parsed as PersistedAdminSettings;
+    } catch {
+      return {};
+    }
+  }
+
+  private persistAdminSettings(): void {
+    const payload: PersistedAdminSettings = {
+      ragTopK: this.ragTopK,
+      operatorCallThresholdMessages: this.operatorCallThresholdMessages,
+    };
+    const dir = path.dirname(this.settings.runtimeSettingsPath);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmpPath = `${this.settings.runtimeSettingsPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf-8");
+    fs.renameSync(tmpPath, this.settings.runtimeSettingsPath);
+  }
+
+  private validInteger(value: unknown, min: number, max: number, fallback: number): number {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+      return fallback;
+    }
+    return value;
   }
 
   private nowUnix(): number {
@@ -628,7 +674,7 @@ export class WebService {
 
   private canCallOperator(chat: ChatThread): boolean {
     const sent = this.countUserMessages(chat);
-    return sent > this.operatorCallThresholdMessages;
+    return sent > this.operatorCallThresholdMessages || chat.assignedOperatorId !== null || chat.status === "resolved";
   }
 
   async sendUserMessage(
@@ -721,6 +767,9 @@ export class WebService {
         `Operator request becomes available after ${this.operatorCallThresholdMessages + 1} messages`,
       );
     }
+    if (chat.escalatedToOperator && (chat.status === "waiting_operator" || chat.status === "in_progress_operator")) {
+      throw new WebServiceError(409, "Operator request is already active for this chat");
+    }
 
     const text = note && note.trim() !== "" ? note.trim() : "User requested operator assistance";
     const response = await this.callChatOrchestrator<OrchestratorUserResponse>("/messages/user", session.accessToken, {
@@ -733,6 +782,7 @@ export class WebService {
 
     chat.escalatedToOperator = true;
     chat.status = response.chat_status;
+    chat.updatedAt = this.nowIso();
 
     return {
       summary: this.toSummary(chat),
@@ -797,7 +847,9 @@ export class WebService {
 
     chat.status = response.chat_status;
     chat.assignedOperatorId = session.userId;
-    if (action === "block_chat") {
+    if (action === "resolve_chat") {
+      chat.escalatedToOperator = false;
+    } else if (action === "block_chat" || action === "send_to_specialist_queue") {
       chat.escalatedToOperator = true;
     }
 
@@ -978,6 +1030,7 @@ export class WebService {
       throw new WebServiceError(422, "operator_call_threshold_messages must be an integer in range [0, 100]");
     }
     this.operatorCallThresholdMessages = operatorCallThresholdMessages;
+    this.persistAdminSettings();
     return { operator_call_threshold_messages: this.operatorCallThresholdMessages };
   }
 
@@ -1113,6 +1166,7 @@ export class WebService {
         throw new WebServiceError(422, "top_k must be an integer in range [1, 50]");
       }
       this.ragTopK = topK;
+      this.persistAdminSettings();
     }
     const payload = await this.callRagAdmin<RagSettingsPayload>("/settings", session.accessToken, "POST", {
       chunk_size_chars: chunkSizeChars,

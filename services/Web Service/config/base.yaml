@@ -18,6 +18,7 @@ user_token_refresh_skew_seconds: 60
 service_token_audience_chat_orchestrator: chat-orchestrator
 service_token_audience_rag_service: rag-service
 operator_call_threshold_messages: 5
+runtime_settings_path: var/admin-settings.json
 session_cookie_name: flashsupport_sid
 session_cookie_secure: false
 session_ttl_seconds: 259200

@@ -286,7 +286,7 @@ function App(): JSX.Element {
     }
   };
 
-  const loadChats = async (): Promise<void> => {
+  const loadChats = async (options: { silent?: boolean } = {}): Promise<void> => {
     if (!profile) {
       setChats([]);
       return;
@@ -302,11 +302,13 @@ function App(): JSX.Element {
         setSelectedChatId(payload.chats.length > 0 ? payload.chats[0].chatId : null);
       }
     } catch (error) {
-      setErrorNotice((error as Error).message);
+      if (!options.silent) {
+        setErrorNotice((error as Error).message);
+      }
     }
   };
 
-  const loadMessages = async (chatId: string): Promise<void> => {
+  const loadMessages = async (chatId: string, options: { silent?: boolean } = {}): Promise<void> => {
     try {
       const payload = await api<{ messages: ChatMessage[] }>(`/api/chats/${chatId}/messages`);
       setMessages((current) => {
@@ -322,7 +324,9 @@ function App(): JSX.Element {
         return [...payload.messages, ...localOnly.filter((message) => !serverIds.has(message.messageId))];
       });
     } catch (error) {
-      setErrorNotice((error as Error).message);
+      if (!options.silent) {
+        setErrorNotice((error as Error).message);
+      }
     }
   };
 
@@ -455,6 +459,22 @@ function App(): JSX.Element {
     void loadMessages(selectedChatId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChatId]);
+
+  useEffect(() => {
+    if (!profile || profile.role === "admin") {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void loadChats({ silent: true });
+      if (selectedChatId) {
+        void loadMessages(selectedChatId, { silent: true });
+      }
+    }, 1500);
+
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.role, selectedChatId]);
 
   useEffect(() => {
     if (!profile || profile.role !== "admin") {
@@ -637,6 +657,16 @@ function App(): JSX.Element {
         setChatActivity(null);
         setNotice("Message sent");
       } else if (profile.role === "operator") {
+        const pendingMessage: ChatMessage = {
+          messageId: `pending-${Date.now()}`,
+          chatId,
+          senderRole: "operator",
+          senderId: profile.userId,
+          text: textToSend,
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((current) => [...current, pendingMessage]);
+        setMessageText("");
         setChatActivity({ chatId, label: "Operator is sending" });
         const payload = await api<{ messages: ChatMessage[] }>(`/api/chats/${chatId}/operator-reply`, {
           method: "POST",
@@ -645,7 +675,6 @@ function App(): JSX.Element {
         setMessages(payload.messages);
         setChatActivity(null);
         setNotice("Operator response sent");
-        setMessageText("");
       } else {
         setErrorNotice("Admins do not communicate with customers directly");
         return;
@@ -1266,7 +1295,11 @@ function App(): JSX.Element {
   const canUserCallOperator =
     profile.role === "registered_user" &&
     selectedChat &&
-    selectedChat.userMessageCount > profile.operatorCallThresholdMessages &&
+    selectedChat.status !== "closed" &&
+    selectedChat.status !== "blocked" &&
+    (selectedChat.userMessageCount > profile.operatorCallThresholdMessages ||
+      selectedChat.assignedOperatorId !== null ||
+      selectedChat.status === "resolved") &&
     !selectedChat.escalatedToOperator;
 
   const formatBytes = (bytes: number): string => {
@@ -1300,7 +1333,7 @@ function App(): JSX.Element {
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${profile.role === "admin" ? "admin-shell" : ""}`}>
       <aside className="panel sidebar">
         <div className="brand">
           <div>
@@ -1340,7 +1373,7 @@ function App(): JSX.Element {
         </div>
       </aside>
 
-      <main className="panel main">
+      <main className={`panel main ${profile.role === "admin" ? "admin-chat-panel" : ""}`}>
         <header className="header">
           <div>
             <h1>{selectedChat ? selectedChat.title : "Select A Chat"}</h1>
@@ -1426,17 +1459,17 @@ function App(): JSX.Element {
         </footer>
       </main>
 
-      <section className="panel side-tools">
+      <section className={`panel side-tools ${profile.role === "admin" ? "admin-tools" : ""}`}>
         {profile.role === "registered_user" && (
           <>
-            <div className="card">
+            <div className="card admin-compact">
               <h3>How It Works</h3>
               <p>Сначала отвечает RAG, затем после порога сообщений можно вызвать оператора.</p>
               <p>
                 Current threshold: <strong>{profile.operatorCallThresholdMessages}</strong>
               </p>
             </div>
-            <div className="card">
+            <div className="card admin-compact">
               <h3>Chat Details</h3>
               <p>{selectedChat ? `Messages from user: ${selectedChat.userMessageCount}` : "Select chat"}</p>
               <p>{selectedChat ? `Escalated: ${selectedChat.escalatedToOperator ? "yes" : "no"}` : ""}</p>
@@ -1446,7 +1479,7 @@ function App(): JSX.Element {
 
         {profile.role === "operator" && (
           <>
-            <div className="card">
+            <div className="card admin-wide">
               <h3>RAG Assistant</h3>
               <input value={ragQuery} onChange={(event) => setRagQuery(event.target.value)} placeholder="Ask RAG" />
               <div className="action-row" style={{ marginTop: 10 }}>
@@ -1465,7 +1498,7 @@ function App(): JSX.Element {
               </div>
             </div>
 
-            <div className="card">
+            <div className="card admin-wide">
               <h3>Knowledge Draft</h3>
               <p>Оператор формирует Q/A заявку для проверки администратором.</p>
               <textarea
@@ -1489,7 +1522,7 @@ function App(): JSX.Element {
 
         {profile.role === "admin" && (
           <>
-            <div className="card">
+            <div className="card admin-wide">
               <h3>Knowledge Review</h3>
               <div style={{ display: "grid", gap: 8 }}>
                 {knowledgeRequests.map((request) => (
@@ -1519,7 +1552,7 @@ function App(): JSX.Element {
               </div>
             </div>
 
-            <div className="card">
+            <div className="card admin-compact">
               <h3>Account Control</h3>
               <div className="action-row" style={{ marginBottom: 12 }}>
                 <input
@@ -1559,7 +1592,7 @@ function App(): JSX.Element {
               </div>
             </div>
 
-            <div className="card">
+            <div className="card admin-wide">
               <h3>LLM Runtime Models</h3>
               <p>Скачивание модели из Hugging Face и переключение активной модели в реальном времени.</p>
               <p className="muted">
@@ -1658,7 +1691,7 @@ function App(): JSX.Element {
               </div>
             </div>
 
-            <div className="card">
+            <div className="card admin-wide">
               <h3>RAG Embedding Models</h3>
               <input
                 value={embeddingHuggingfaceUrl}
@@ -1729,7 +1762,7 @@ function App(): JSX.Element {
               </div>
             </div>
 
-            <div className="card">
+            <div className="card admin-wide">
               <h3>RAG Knowledge Bases</h3>
               <div className="action-row">
                 <input

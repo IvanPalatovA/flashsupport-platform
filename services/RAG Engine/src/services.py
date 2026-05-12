@@ -4,6 +4,7 @@ import json
 import math
 import re
 import threading
+from pathlib import Path
 from typing import Any, Protocol
 
 from domain import GeneratedAnswerEntity, KnowledgeBaseEntity, KnowledgeDocumentEntity, SearchResultEntity
@@ -275,8 +276,41 @@ class KnowledgeAdminService:
 class RagRuntimeSettings:
     def __init__(self, settings: Settings) -> None:
         self._lock = threading.RLock()
-        self._chunk_size_chars = settings.chunk_size_chars
-        self._chunk_overlap_chars = settings.chunk_overlap_chars
+        self._settings_path = Path(settings.embedding_model_storage_dir).resolve() / "rag_runtime_settings.json"
+        persisted = self._load_settings()
+        self._chunk_size_chars = self._coerce_int(persisted.get("chunk_size_chars"), settings.chunk_size_chars)
+        self._chunk_overlap_chars = self._coerce_int(persisted.get("chunk_overlap_chars"), settings.chunk_overlap_chars)
+        if (
+            self._chunk_size_chars < 200
+            or self._chunk_size_chars > 8000
+            or self._chunk_overlap_chars < 0
+            or self._chunk_overlap_chars > 2000
+            or self._chunk_overlap_chars >= self._chunk_size_chars
+        ):
+            self._chunk_size_chars = settings.chunk_size_chars
+            self._chunk_overlap_chars = settings.chunk_overlap_chars
+
+    def _load_settings(self) -> dict[str, Any]:
+        try:
+            with self._settings_path.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except (OSError, ValueError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _coerce_int(self, value: Any, fallback: int) -> int:
+        if isinstance(value, bool):
+            return fallback
+        if isinstance(value, int):
+            return value
+        return fallback
+
+    def _persist_settings(self) -> None:
+        self._settings_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self._settings_path.with_suffix(".tmp")
+        with tmp_path.open("w", encoding="utf-8") as file:
+            json.dump(self.get_settings(), file, ensure_ascii=False, indent=2)
+        tmp_path.replace(self._settings_path)
 
     def get_settings(self) -> dict[str, int]:
         with self._lock:
@@ -295,4 +329,5 @@ class RagRuntimeSettings:
         with self._lock:
             self._chunk_size_chars = chunk_size_chars
             self._chunk_overlap_chars = chunk_overlap_chars
+            self._persist_settings()
             return self.get_settings()
