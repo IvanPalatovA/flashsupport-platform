@@ -61,6 +61,13 @@ class RAGResultEntity:
 
 
 @dataclass(slots=True)
+class RAGSearchResponseEntity:
+	results: list[RAGResultEntity]
+	generated_answer: str
+	llm_model: str
+
+
+@dataclass(slots=True)
 class MessageEntity:
 	chat_id: str
 	sender_role: Role

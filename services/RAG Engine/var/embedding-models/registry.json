@@ -1,0 +1,14 @@
+{
+  "active_model": "sentence-transformers--all-MiniLM-L6-v2",
+  "models": {
+    "sentence-transformers--all-MiniLM-L6-v2": {
+      "created_at": "2026-05-11T22:06:31Z",
+      "device": "mps",
+      "embedding_dimension": 384,
+      "local_path": "/Users/admin/Documents/\u0434\u0438\u0441\u0446\u0438\u043f\u043b\u0438\u043d\u044b/4 \u0441\u0435\u043c\u0435\u0441\u0442\u0440/Flash-support/flashsupport-platform/services/RAG Engine/var/embedding-models/sentence-transformers--all-MiniLM-L6-v2",
+      "model_name": "sentence-transformers--all-MiniLM-L6-v2",
+      "repo_id": "sentence-transformers/all-MiniLM-L6-v2",
+      "source": "huggingface"
+    }
+  }
+}

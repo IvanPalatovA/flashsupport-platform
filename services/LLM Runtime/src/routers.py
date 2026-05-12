@@ -15,6 +15,8 @@ from models import (
     InferenceResponse,
     ModelActivateRequest,
     ModelDownloadRequest,
+    RuntimeSettingsResponse,
+    RuntimeSettingsUpdateRequest,
     RuntimeModelsResponse,
 )
 from services import (
@@ -187,6 +189,32 @@ def get_model_download_status(
     _enforce_allowed_caller(identity=identity, service=service)
     _enforce_admin_user(identity)
     return DownloadStatusResponse.model_validate(admin_service.get_download_status())
+
+
+@router.get("/settings", response_model=RuntimeSettingsResponse, tags=["settings"])
+def get_runtime_settings(
+    identity: RequestIdentity = Depends(require_request_identity),
+    service: QueuedInferenceService = Depends(get_inference_service),
+    backend: OllamaClient = Depends(get_ollama_client),
+) -> RuntimeSettingsResponse:
+    _enforce_allowed_caller(identity=identity, service=service)
+    _enforce_admin_user(identity)
+    return RuntimeSettingsResponse(system_prompt=backend.get_system_prompt())
+
+
+@router.post("/settings", response_model=RuntimeSettingsResponse, tags=["settings"])
+def update_runtime_settings(
+    payload: RuntimeSettingsUpdateRequest,
+    identity: RequestIdentity = Depends(require_request_identity),
+    service: QueuedInferenceService = Depends(get_inference_service),
+    backend: OllamaClient = Depends(get_ollama_client),
+) -> RuntimeSettingsResponse:
+    _enforce_allowed_caller(identity=identity, service=service)
+    _enforce_admin_user(identity)
+    try:
+        return RuntimeSettingsResponse(system_prompt=backend.set_system_prompt(payload.system_prompt))
+    except Exception as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
 
 @router.post("/models/activate", response_model=RuntimeModelsResponse, tags=["models"])

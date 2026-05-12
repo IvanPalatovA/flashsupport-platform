@@ -2,6 +2,7 @@ from domain import (
     ChatStatus,
     OperatorAction,
     RAGResultEntity,
+    RAGSearchResponseEntity,
     Role,
     SpecialistDecision,
 )
@@ -72,20 +73,24 @@ class FakeRagEngine:
         self.calls: int = 0
         self.last_user_token: str | None = None
 
-    def search(self, query: str, top_k: int, user_token: str) -> list[RAGResultEntity]:
+    def search(self, query: str, top_k: int, user_token: str) -> RAGSearchResponseEntity:
         self.calls += 1
         _ = query
         self.last_user_token = user_token
-        return [
-            RAGResultEntity(
-                chunk_id=1,
-                document_id=11,
-                document_title="Password reset",
-                chunk_index=0,
-                score=0.95,
-                text=f"result-{top_k}",
-            )
-        ]
+        return RAGSearchResponseEntity(
+            results=[
+                RAGResultEntity(
+                    chunk_id=1,
+                    document_id=11,
+                    document_title="Password reset",
+                    chunk_index=0,
+                    score=0.95,
+                    text=f"result-{top_k}",
+                )
+            ],
+            generated_answer="generated answer",
+            llm_model="test-model",
+        )
 
 
 def build_service() -> tuple[ChatOrchestratorService, FakePersistence, FakeRagEngine]:
@@ -135,6 +140,7 @@ def test_user_message_goes_to_rag_engine_by_default() -> None:
 
     assert result.route.value == "rag_engine"
     assert result.chat_status == ChatStatus.open
+    assert result.message == "generated answer"
     assert len(result.rag_results) == 1
     assert rag_engine.calls == 1
     assert rag_engine.last_user_token == "user-token"

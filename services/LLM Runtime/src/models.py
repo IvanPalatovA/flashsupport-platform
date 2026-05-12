@@ -64,6 +64,14 @@ class RuntimeModelsResponse(BaseModel):
     download: DownloadStatusResponse
 
 
+class RuntimeSettingsResponse(BaseModel):
+    system_prompt: str = Field(min_length=1, max_length=8000)
+
+
+class RuntimeSettingsUpdateRequest(BaseModel):
+    system_prompt: str = Field(min_length=1, max_length=8000)
+
+
 class ModelDownloadRequest(BaseModel):
     huggingface_url: str = Field(min_length=10, max_length=2000)
     model_name: str | None = Field(default=None, min_length=1, max_length=128)

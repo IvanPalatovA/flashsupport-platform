@@ -5,10 +5,10 @@ from typing import Any, cast
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import text
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 
-from domain import ChatStatus, MessageEntity, RAGResultEntity, Role, SpecialistDecision
+from domain import ChatStatus, MessageEntity, RAGResultEntity, RAGSearchResponseEntity, Role, SpecialistDecision
 from infrastructure.auth_client import AuthClientError, ServiceTokenProvider
 
 
@@ -34,7 +34,7 @@ class ChatPersistenceRepository:
 
 	def _ensure_chat_exists(self, chat_id: str) -> None:
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO chats (chat_id)
 				VALUES (:chat_id)
@@ -47,7 +47,7 @@ class ChatPersistenceRepository:
 	def save_message(self, message: MessageEntity) -> None:
 		self._ensure_chat_exists(message.chat_id)
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO chat_messages (
 					message_id,
@@ -84,7 +84,7 @@ class ChatPersistenceRepository:
 	def save_event(self, chat_id: str, event_type: str, payload: dict[str, object]) -> None:
 		self._ensure_chat_exists(chat_id)
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO chat_events (chat_id, event_type, payload)
 				VALUES (:chat_id, :event_type, CAST(:payload AS JSONB))
@@ -96,7 +96,7 @@ class ChatPersistenceRepository:
 	def update_chat_status(self, chat_id: str, status: ChatStatus, actor_id: str, note: str | None) -> None:
 		self._ensure_chat_exists(chat_id)
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO chats (chat_id, status, updated_by, note)
 				VALUES (:chat_id, :status, :actor_id, :note)
@@ -111,7 +111,7 @@ class ChatPersistenceRepository:
 			{"chat_id": chat_id, "status": status.value, "actor_id": actor_id, "note": note},
 		)
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO chat_status_history (chat_id, status, actor_id, note)
 				VALUES (:chat_id, :status, :actor_id, :note)
@@ -124,7 +124,7 @@ class ChatPersistenceRepository:
 		self._ensure_chat_exists(chat_id)
 		queue_item_id = f"opq-{uuid4()}"
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO operator_queue (queue_item_id, chat_id, sender_role, sender_id, text)
 				VALUES (:queue_item_id, :chat_id, :sender_role, :sender_id, :text)
@@ -144,7 +144,7 @@ class ChatPersistenceRepository:
 		self._ensure_chat_exists(chat_id)
 		queue_item_id = f"spq-{uuid4()}"
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO specialist_queue (queue_item_id, chat_id, operator_id, note)
 				VALUES (:queue_item_id, :chat_id, :operator_id, :note)
@@ -169,7 +169,7 @@ class ChatPersistenceRepository:
 	) -> None:
 		self._ensure_chat_exists(chat_id)
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				UPDATE specialist_queue
 				SET
@@ -199,7 +199,7 @@ class ChatPersistenceRepository:
 	) -> None:
 		self._ensure_chat_exists(chat_id)
 		self._session.execute(
-			text(
+			sql_text(
 				"""
 				INSERT INTO knowledge_base_updates (queue_item_id, chat_id, specialist_id, comment)
 				VALUES (:queue_item_id, :chat_id, :specialist_id, :comment)
@@ -220,7 +220,7 @@ class RagEngineRepository:
 		self._timeout_seconds = timeout_seconds
 		self._service_token_provider = service_token_provider
 
-	def search(self, query: str, top_k: int, user_token: str) -> list[RAGResultEntity]:
+	def search(self, query: str, top_k: int, user_token: str) -> RAGSearchResponseEntity:
 		url = f"{self._base_url}/search"
 		try:
 			service_token = self._service_token_provider.get_service_access_token()
@@ -253,8 +253,9 @@ class RagEngineRepository:
 		data = _safe_json_object(response)
 		raw_results_obj = data.get("results")
 		if not isinstance(raw_results_obj, list):
-			return []
-		raw_results = cast(list[Any], raw_results_obj)
+			raw_results = []
+		else:
+			raw_results = cast(list[Any], raw_results_obj)
 
 		results: list[RAGResultEntity] = []
 		for raw_item in raw_results:
@@ -273,4 +274,10 @@ class RagEngineRepository:
 					text=str(item.get("text", "")),
 				)
 			)
-		return results
+		generated_answer_obj = data.get("generated_answer")
+		generated_answer = generated_answer_obj.strip() if isinstance(generated_answer_obj, str) else ""
+		if generated_answer == "":
+			generated_answer = "RAG found relevant context, but LLM Runtime returned no generated answer."
+		llm_model_obj = data.get("llm_model")
+		llm_model = llm_model_obj.strip() if isinstance(llm_model_obj, str) and llm_model_obj.strip() else "unknown"
+		return RAGSearchResponseEntity(results=results, generated_answer=generated_answer, llm_model=llm_model)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import math
 import re
+import threading
 from typing import Any, Protocol
 
 from domain import GeneratedAnswerEntity, KnowledgeBaseEntity, KnowledgeDocumentEntity, SearchResultEntity
@@ -113,17 +115,63 @@ class KnowledgeAdminService:
         repository: KnowledgeRepository,
         settings: Settings,
         embedding_runtime: EmbeddingRuntime,
+        runtime_settings: "RagRuntimeSettings | None" = None,
     ) -> None:
         self._repository = repository
         self._settings = settings
         self._embedding_runtime = embedding_runtime
+        self._runtime_settings = runtime_settings or RagRuntimeSettings(settings)
+
+    def _json_sections(self, value: Any, path: str = "$") -> list[tuple[str, dict[str, Any]]]:
+        if isinstance(value, list):
+            sections: list[tuple[str, dict[str, Any]]] = []
+            for index, item in enumerate(value):
+                item_path = f"{path}[{index}]"
+                if isinstance(item, (dict, list)):
+                    item_text = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                else:
+                    item_text = str(item)
+                if item_text.strip():
+                    sections.append((item_text, {"json_path": item_path}))
+            return sections
+
+        if isinstance(value, dict):
+            sections = []
+            for key, item in value.items():
+                item_path = f"{path}.{key}"
+                if isinstance(item, list):
+                    sections.extend(self._json_sections(item, item_path))
+                    continue
+                if isinstance(item, dict):
+                    item_text = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                else:
+                    item_text = str(item)
+                if item_text.strip():
+                    sections.append((item_text, {"json_path": item_path, "json_key": str(key)}))
+            if sections:
+                return sections
+            return [(json.dumps(value, ensure_ascii=False, sort_keys=True), {"json_path": path})]
+
+        text_value = str(value)
+        return [(text_value, {"json_path": path})] if text_value.strip() else []
+
+    def _document_sections(self, text: str) -> list[tuple[str, dict[str, Any]]]:
+        stripped = text.strip()
+        if stripped == "":
+            return []
+        try:
+            parsed = json.loads(stripped)
+        except ValueError:
+            return [(text, {})]
+        return self._json_sections(parsed)
 
     def _chunk_text(self, text: str) -> list[str]:
         normalized = re.sub(r"\s+", " ", text).strip()
         if normalized == "":
             return []
-        chunk_size = self._settings.chunk_size_chars
-        overlap = min(self._settings.chunk_overlap_chars, max(0, chunk_size - 1))
+        settings = self._runtime_settings.get_settings()
+        chunk_size = settings["chunk_size_chars"]
+        overlap = min(settings["chunk_overlap_chars"], max(0, chunk_size - 1))
         chunks: list[str] = []
         start = 0
         while start < len(normalized):
@@ -193,10 +241,23 @@ class KnowledgeAdminService:
             )
 
         prepared_chunks: list[tuple[str, list[float], dict[str, Any]]] = []
-        for chunk_index, chunk in enumerate(self._chunk_text(text)):
-            embedding, _, _, generation = self._embedding_runtime.encode(chunk)
-            self._embedding_runtime.assert_generation(generation)
-            prepared_chunks.append((chunk, embedding, {"chunk_index": chunk_index}))
+        for section_index, (section_text, section_metadata) in enumerate(self._document_sections(text)):
+            section_chunks = self._chunk_text(section_text)
+            for section_chunk_index, chunk in enumerate(section_chunks):
+                embedding, _, _, generation = self._embedding_runtime.encode(chunk)
+                self._embedding_runtime.assert_generation(generation)
+                prepared_chunks.append(
+                    (
+                        chunk,
+                        embedding,
+                        {
+                            **section_metadata,
+                            "section_index": section_index,
+                            "section_chunk_index": section_chunk_index,
+                            "chunk_index": len(prepared_chunks),
+                        },
+                    )
+                )
         if len(prepared_chunks) == 0:
             raise RuntimeError("document text produced no chunks")
         return self._repository.add_document(
@@ -209,3 +270,29 @@ class KnowledgeAdminService:
 
     def delete_document(self, knowledge_base_id: int, document_id: int) -> None:
         self._repository.delete_document(knowledge_base_id=knowledge_base_id, document_id=document_id)
+
+
+class RagRuntimeSettings:
+    def __init__(self, settings: Settings) -> None:
+        self._lock = threading.RLock()
+        self._chunk_size_chars = settings.chunk_size_chars
+        self._chunk_overlap_chars = settings.chunk_overlap_chars
+
+    def get_settings(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "chunk_size_chars": self._chunk_size_chars,
+                "chunk_overlap_chars": self._chunk_overlap_chars,
+            }
+
+    def update_settings(self, *, chunk_size_chars: int, chunk_overlap_chars: int) -> dict[str, int]:
+        if chunk_size_chars < 200 or chunk_size_chars > 8000:
+            raise ValueError("chunk_size_chars must be between 200 and 8000")
+        if chunk_overlap_chars < 0 or chunk_overlap_chars > 2000:
+            raise ValueError("chunk_overlap_chars must be between 0 and 2000")
+        if chunk_overlap_chars >= chunk_size_chars:
+            raise ValueError("chunk_overlap_chars must be smaller than chunk_size_chars")
+        with self._lock:
+            self._chunk_size_chars = chunk_size_chars
+            self._chunk_overlap_chars = chunk_overlap_chars
+            return self.get_settings()

@@ -73,9 +73,19 @@ class EmbeddingModelActivateRequest(BaseModel):
     model_name: str = Field(min_length=1, max_length=128)
 
 
+class RagSettingsResponse(BaseModel):
+    chunk_size_chars: int = Field(ge=200, le=8000)
+    chunk_overlap_chars: int = Field(ge=0, le=2000)
+
+
+class RagSettingsUpdateRequest(BaseModel):
+    chunk_size_chars: int = Field(ge=200, le=8000)
+    chunk_overlap_chars: int = Field(ge=0, le=2000)
+
+
 class KnowledgeDocumentInput(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    text: str = Field(min_length=1, max_length=200000)
+    text: str = Field(min_length=1, max_length=5_000_000)
     source: str | None = Field(default=None, min_length=1, max_length=2000)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

@@ -11,6 +11,7 @@ from domain import (
 	MessageEntity,
 	OperatorAction,
 	RAGResultEntity,
+	RAGSearchResponseEntity,
 	Role,
 	SpecialistDecision,
 	SpecialistReviewResultEntity,
@@ -56,7 +57,7 @@ class PersistencePort(Protocol):
 
 
 class RAGPort(Protocol):
-	def search(self, query: str, top_k: int, user_token: str) -> list[RAGResultEntity]:
+	def search(self, query: str, top_k: int, user_token: str) -> RAGSearchResponseEntity:
 		...
 
 
@@ -162,18 +163,18 @@ class ChatOrchestratorService:
 			)
 
 		final_top_k = top_k if top_k is not None else self._settings.default_top_k
-		rag_results = self._rag_engine.search(query=text, top_k=final_top_k, user_token=user_access_token)
+		rag_response = self._rag_engine.search(query=text, top_k=final_top_k, user_token=user_access_token)
 		self._persistence.save_event(
 			chat_id=resolved_chat_id,
 			event_type="forwarded_to_rag_engine",
-			payload={"top_k": final_top_k, "result_count": len(rag_results)},
+			payload={"top_k": final_top_k, "result_count": len(rag_response.results), "llm_model": rag_response.llm_model},
 		)
 		return UserMessageResultEntity(
 			chat_id=resolved_chat_id,
 			route=DeliveryTarget.rag_engine,
 			chat_status=ChatStatus.open,
-			message="Message forwarded to RAG Engine",
-			rag_results=rag_results,
+			message=rag_response.generated_answer,
+			rag_results=rag_response.results,
 		)
 
 	def process_operator_message(

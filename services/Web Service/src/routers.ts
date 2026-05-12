@@ -268,6 +268,28 @@ export function createRouter(service: WebService, settings: Settings): Router {
   );
 
   router.get(
+    "/admin/app/settings",
+    asyncHandler(async (req, res) => {
+      const payload = await service.getAppSettings(getSessionId(req, settings));
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/app/settings",
+    asyncHandler(async (req, res) => {
+      const threshold = asRequiredPositiveInt(
+        req.body?.operator_call_threshold_messages,
+        "operator_call_threshold_messages",
+        0,
+        100,
+      );
+      const payload = await service.updateAppSettings(getSessionId(req, settings), threshold);
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.get(
     "/admin/llm/models",
     asyncHandler(async (req, res) => {
       const payload = await service.listRuntimeModels(getSessionId(req, settings));
@@ -304,6 +326,23 @@ export function createRouter(service: WebService, settings: Settings): Router {
     asyncHandler(async (req, res) => {
       const modelName = asString(req.body?.model_name, "model_name", 1, 128);
       const payload = await service.activateRuntimeModel(getSessionId(req, settings), modelName);
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.get(
+    "/admin/llm/settings",
+    asyncHandler(async (req, res) => {
+      const payload = await service.getRuntimeSettings(getSessionId(req, settings));
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/llm/settings",
+    asyncHandler(async (req, res) => {
+      const systemPrompt = asString(req.body?.system_prompt, "system_prompt", 1, 8000);
+      const payload = await service.updateRuntimeSettings(getSessionId(req, settings), systemPrompt);
       res.status(200).json(payload);
     }),
   );
@@ -350,6 +389,30 @@ export function createRouter(service: WebService, settings: Settings): Router {
   );
 
   router.get(
+    "/admin/rag/settings",
+    asyncHandler(async (req, res) => {
+      const payload = await service.getRagSettings(getSessionId(req, settings));
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.post(
+    "/admin/rag/settings",
+    asyncHandler(async (req, res) => {
+      const chunkSizeChars = asRequiredPositiveInt(req.body?.chunk_size_chars, "chunk_size_chars", 200, 8000);
+      const chunkOverlapChars = asPositiveInt(req.body?.chunk_overlap_chars, "chunk_overlap_chars", 160, 0, 2000);
+      const topK = asPositiveInt(req.body?.top_k, "top_k", 3, 1, 50);
+      const payload = await service.updateRagSettings(
+        getSessionId(req, settings),
+        chunkSizeChars,
+        chunkOverlapChars,
+        topK,
+      );
+      res.status(200).json(payload);
+    }),
+  );
+
+  router.get(
     "/admin/rag/knowledge-bases",
     asyncHandler(async (req, res) => {
       const bases = await service.listKnowledgeBases(getSessionId(req, settings));
@@ -366,8 +429,8 @@ export function createRouter(service: WebService, settings: Settings): Router {
       const documents = documentsRaw.map((item: unknown) => {
         const raw = item as Record<string, unknown>;
         return {
-          title: asString(raw.title, "document.title", 1, 300),
-          text: asString(raw.text, "document.text", 1, 200000),
+          title: asOptionalString(raw.title, "document.title", 300) ?? "Untitled document",
+          text: asString(raw.text, "document.text", 1, 5_000_000),
           source: asOptionalString(raw.source, "document.source", 2000),
         };
       });
@@ -408,8 +471,8 @@ export function createRouter(service: WebService, settings: Settings): Router {
     "/admin/rag/knowledge-bases/:knowledgeBaseId/documents",
     asyncHandler(async (req, res) => {
       const knowledgeBaseId = asRequiredPositiveInt(req.params.knowledgeBaseId, "knowledgeBaseId");
-      const title = asString(req.body?.title, "title", 1, 300);
-      const text = asString(req.body?.text, "text", 1, 200000);
+      const title = asOptionalString(req.body?.title, "title", 300) ?? "Untitled document";
+      const text = asString(req.body?.text, "text", 1, 5_000_000);
       const source = asOptionalString(req.body?.source, "source", 2000);
       const document = await service.addKnowledgeBaseDocument(getSessionId(req, settings), knowledgeBaseId, {
         title,

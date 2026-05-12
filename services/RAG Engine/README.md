@@ -105,12 +105,22 @@ Apple MPS/Metal не пробрасывается в Linux-контейнер Do
 
 Для MPS запускайте RAG Engine нативно на macOS, а остальные сервисы оставляйте в Docker:
 
+Сначала запустите Ollama на MacBook так, чтобы Docker-контейнеры могли к ней подключиться:
+
 ```bash
-docker compose --env-file .env.public.dev -f docker-compose.yml -f docker-compose.macos-mps.yml up -d --build
+./scripts/run-ollama-macos-mps.sh
+```
+
+Если порт `11434` уже занят приложением Ollama, закройте приложение Ollama и запустите скрипт снова.
+
+Затем из корня проекта:
+
+```bash
+docker compose --env-file .env.public.dev -f docker-compose.yml -f docker-compose.macos-mps.yml up -d --build --remove-orphans
 ./scripts/run-rag-macos-mps.sh
 ```
 
-Скрипт запускает RAG Engine на `http://localhost:18080` с `EMBEDDING_DEVICE=mps`. Override-файл `docker-compose.macos-mps.yml` направляет `web-service` и `chat-orchestrator` на `http://host.docker.internal:18080`.
+Скрипт запускает RAG Engine на `http://localhost:18080` с `EMBEDDING_DEVICE=mps`. Override-файл `docker-compose.macos-mps.yml` направляет `web-service` и `chat-orchestrator` на `http://host.docker.internal:18080`, а `llm-runtime` направляет на Ollama на `http://host.docker.internal:11434`.
 
 ## Тесты
 

@@ -300,7 +300,7 @@ class ModelAdminService:
                 self._backend.create_model_from_gguf(
                     model_name=model_name,
                     gguf_path=str(local_file),
-                    system_prompt=self._settings.llm_system_prompt,
+                    system_prompt=self._backend.get_system_prompt(),
                 )
             except OllamaClientError as error:
                 raise ModelAdminError(str(error)) from error

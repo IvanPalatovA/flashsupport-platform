@@ -23,11 +23,13 @@ from models import (
     KnowledgeDocument,
     KnowledgeDocumentCreateRequest,
     KnowledgeDocumentsResponse,
+    RagSettingsResponse,
+    RagSettingsUpdateRequest,
     SearchRequest,
     SearchResponse,
     SearchResult,
 )
-from services import KnowledgeAdminService, SearchCancelledError, SearchService
+from services import KnowledgeAdminService, RagRuntimeSettings, SearchCancelledError, SearchService
 
 router = APIRouter()
 
@@ -40,6 +42,11 @@ def get_token_verifier() -> AuthTokenVerifier:
 @lru_cache(maxsize=1)
 def get_embedding_runtime() -> EmbeddingRuntime:
     return EmbeddingRuntime(get_settings())
+
+
+@lru_cache(maxsize=1)
+def get_rag_runtime_settings() -> RagRuntimeSettings:
+    return RagRuntimeSettings(get_settings())
 
 
 def require_request_identity(
@@ -87,6 +94,7 @@ def get_knowledge_admin_service(
         repository=KnowledgeRepository(session=session),
         settings=settings,
         embedding_runtime=get_embedding_runtime(),
+        runtime_settings=get_rag_runtime_settings(),
     )
 
 
@@ -198,6 +206,31 @@ def activate_embedding_model(
     try:
         return EmbeddingModelsResponse.model_validate(runtime.activate_model(payload.model_name))
     except EmbeddingRuntimeError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+
+@router.get("/settings", response_model=RagSettingsResponse, tags=["settings"])
+def get_rag_settings(
+    identity: RequestIdentity = Depends(require_request_identity),
+) -> RagSettingsResponse:
+    _enforce_admin(identity)
+    return RagSettingsResponse.model_validate(get_rag_runtime_settings().get_settings())
+
+
+@router.post("/settings", response_model=RagSettingsResponse, tags=["settings"])
+def update_rag_settings(
+    payload: RagSettingsUpdateRequest,
+    identity: RequestIdentity = Depends(require_request_identity),
+) -> RagSettingsResponse:
+    _enforce_admin(identity)
+    try:
+        return RagSettingsResponse.model_validate(
+            get_rag_runtime_settings().update_settings(
+                chunk_size_chars=payload.chunk_size_chars,
+                chunk_overlap_chars=payload.chunk_overlap_chars,
+            )
+        )
+    except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
 

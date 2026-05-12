@@ -22,9 +22,19 @@ class OllamaClient:
         self._base_url = settings.ollama_base_url.rstrip("/")
         self._timeout_seconds = settings.ollama_request_timeout_seconds
         self._active_model = settings.llm_model_name
+        self._system_prompt_path = Path(settings.model_storage_dir).resolve() / "system_prompt.txt"
+        self._system_prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        self._system_prompt = self._load_system_prompt(settings.llm_system_prompt)
         self._requested_device = self._normalize_device(settings.llm_device)
         self._device = "gpu" if self._requested_device in {"cuda", "mps"} else self._requested_device
         self._model_lock = threading.RLock()
+
+    def _load_system_prompt(self, default_prompt: str) -> str:
+        try:
+            prompt = self._system_prompt_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return default_prompt
+        return prompt or default_prompt
 
     def _normalize_device(self, value: str) -> str:
         normalized = value.strip().lower()
@@ -47,6 +57,21 @@ class OllamaClient:
         if self._requested_device == "auto":
             return "Ollama chooses CUDA, Metal/MPS, or CPU in its own process; this service cannot verify the actual accelerator."
         return None
+
+    def get_system_prompt(self) -> str:
+        with self._model_lock:
+            return self._system_prompt
+
+    def set_system_prompt(self, system_prompt: str) -> str:
+        normalized = system_prompt.strip()
+        if normalized == "":
+            raise OllamaClientError("system prompt cannot be empty")
+        if len(normalized) > 8000:
+            raise OllamaClientError("system prompt cannot be longer than 8000 characters")
+        with self._model_lock:
+            self._system_prompt = normalized
+            self._system_prompt_path.write_text(normalized, encoding="utf-8")
+            return self._system_prompt
 
     def set_active_model(self, model_name: str) -> None:
         normalized = model_name.strip()
@@ -81,6 +106,19 @@ class OllamaClient:
             if isinstance(name_obj, str) and name_obj.strip() != "":
                 names.append(name_obj.strip())
         return names
+
+    def _http_error_detail(self, error: httpx.HTTPError) -> str:
+        if isinstance(error, httpx.HTTPStatusError):
+            response = error.response
+            body = response.text.strip()
+            if len(body) > 500:
+                body = body[:500] + "..."
+            if body:
+                return f"HTTP {response.status_code}: {body}"
+            return f"HTTP {response.status_code}"
+        if isinstance(error, httpx.RequestError):
+            return str(error)
+        return error.__class__.__name__
 
     def stop_model(self, model_name: str) -> None:
         normalized = model_name.strip()
@@ -125,7 +163,10 @@ class OllamaClient:
                 )
                 upload_response.raise_for_status()
         except httpx.HTTPError as error:
-            raise OllamaClientError(f"failed to upload GGUF blob to ollama for model '{normalized_model}'") from error
+            detail = self._http_error_detail(error)
+            raise OllamaClientError(
+                f"failed to upload GGUF blob to ollama for model '{normalized_model}': {detail}"
+            ) from error
 
         modelfile = f'FROM {gguf_file.name}\nSYSTEM """\n{system_prompt.strip()}\n"""\n'
         create_url = f"{self._base_url}/api/create"
@@ -142,7 +183,8 @@ class OllamaClient:
             )
             create_response.raise_for_status()
         except httpx.HTTPError as error:
-            raise OllamaClientError(f"failed to register model '{normalized_model}' in ollama") from error
+            detail = self._http_error_detail(error)
+            raise OllamaClientError(f"failed to register model '{normalized_model}' in ollama: {detail}") from error
 
     def _build_user_prompt(self, instruction: str, contexts: list[ContextChunkEntity]) -> str:
         lines = [f"Instruction:\n{instruction.strip()}", ""]
@@ -164,6 +206,46 @@ class OllamaClient:
 
         lines.append("Use only relevant information from snippets. If snippets are insufficient, say that directly.")
         return "\n".join(lines)
+
+    def _infer_generate_fallback(
+        self,
+        *,
+        target_model: str,
+        prompt: str,
+        options: dict[str, float | int],
+    ) -> tuple[str, str]:
+        payload = {
+            "model": target_model,
+            "prompt": f"{self.get_system_prompt().strip()}\n\n{prompt}",
+            "options": options,
+            "stream": False,
+        }
+        try:
+            response = httpx.post(
+                f"{self._base_url}/api/generate",
+                json=payload,
+                timeout=self._timeout_seconds,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise OllamaClientError(f"ollama generate fallback failed: {self._http_error_detail(error)}") from error
+
+        try:
+            data = response.json()
+        except ValueError as error:
+            raise OllamaClientError("ollama generate fallback returned invalid JSON") from error
+        if not isinstance(data, dict):
+            raise OllamaClientError("ollama generate fallback returned invalid payload")
+        answer_obj = data.get("response")
+        answer = answer_obj.strip() if isinstance(answer_obj, str) else ""
+        if answer == "":
+            return (
+                "Не удалось получить непустой ответ от LLM. Попробуйте переформулировать вопрос или выбрать другую модель.",
+                target_model,
+            )
+        model_obj = data.get("model")
+        model = model_obj.strip() if isinstance(model_obj, str) and model_obj.strip() else target_model
+        return answer, model
 
     def infer(
         self,
@@ -188,11 +270,12 @@ class OllamaClient:
         if self._device == "cpu":
             options["num_gpu"] = 0
 
+        user_prompt = self._build_user_prompt(instruction=instruction, contexts=contexts)
         payload = {
             "model": target_model,
             "messages": [
-                {"role": "system", "content": self._settings.llm_system_prompt},
-                {"role": "user", "content": self._build_user_prompt(instruction=instruction, contexts=contexts)},
+                {"role": "system", "content": self.get_system_prompt()},
+                {"role": "user", "content": user_prompt},
             ],
             "options": options,
             "stream": True,
@@ -240,5 +323,5 @@ class OllamaClient:
 
         answer = "".join(answer_parts).strip()
         if answer == "":
-            raise OllamaClientError("ollama returned empty message content")
+            return self._infer_generate_fallback(target_model=target_model, prompt=user_prompt, options=options)
         return answer, resolved_model

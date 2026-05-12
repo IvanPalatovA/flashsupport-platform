@@ -81,6 +81,14 @@ interface RuntimeModelsPayload {
   download: RuntimeDownloadStatus;
 }
 
+interface RuntimeSettingsPayload {
+  system_prompt: string;
+}
+
+interface AppSettingsPayload {
+  operator_call_threshold_messages: number;
+}
+
 interface EmbeddingDownloadStatus {
   status: string;
   model_name: string | null;
@@ -113,6 +121,12 @@ interface EmbeddingModelsPayload {
   device_warning?: string | null;
   models: EmbeddingModelInfo[];
   download: EmbeddingDownloadStatus;
+}
+
+interface RagSettingsPayload {
+  chunk_size_chars: number;
+  chunk_overlap_chars: number;
+  top_k?: number;
 }
 
 interface KnowledgeBasePayload {
@@ -155,6 +169,8 @@ export class WebService {
   private readonly knowledgeRequests = new Map<string, KnowledgeRequest>();
   private readonly accounts = new Map<string, AccountRecord>();
   private readonly serviceTokenCache = new Map<string, CachedServiceToken>();
+  private ragTopK = 3;
+  private operatorCallThresholdMessages: number;
 
   constructor(
     private readonly settings: Settings,
@@ -162,7 +178,9 @@ export class WebService {
     private readonly upstream: UpstreamClients,
     private readonly tokenSecurity: TokenSecurity,
     private readonly sessionStore: SessionStore,
-  ) {}
+  ) {
+    this.operatorCallThresholdMessages = settings.operatorCallThresholdMessages;
+  }
 
   private nowUnix(): number {
     return Math.floor(Date.now() / 1000);
@@ -184,7 +202,7 @@ export class WebService {
       userId: session.userId,
       login: session.login,
       role: session.role,
-      operatorCallThresholdMessages: this.settings.operatorCallThresholdMessages,
+      operatorCallThresholdMessages: this.operatorCallThresholdMessages,
     };
   }
 
@@ -343,8 +361,17 @@ export class WebService {
     return chat.messages.filter((message) => message.senderRole === "registered_user").length;
   }
 
+  private compactWords(text: string, maxWords: number): string {
+    return text.trim().split(/\s+/).filter(Boolean).slice(0, maxWords).join(" ");
+  }
+
+  private previewText(text: string): string {
+    const compact = this.compactWords(text.replace(/\s+/g, " "), 18);
+    return compact.length < text.trim().length ? `${compact}...` : compact;
+  }
+
   private toSummary(chat: ChatThread): ChatSummary {
-    const preview = chat.messages.length > 0 ? chat.messages[chat.messages.length - 1].text : "";
+    const preview = chat.messages.length > 0 ? this.previewText(chat.messages[chat.messages.length - 1].text) : "";
     return {
       chatId: chat.chatId,
       title: chat.title,
@@ -599,21 +626,9 @@ export class WebService {
     return chat.messages;
   }
 
-  private formatRagReply(
-    orchestratorMessage: string,
-    ragResults: Array<{ document_title: string; text: string; score: number }> | undefined,
-  ): string {
-    if (!ragResults || ragResults.length === 0) {
-      return orchestratorMessage;
-    }
-
-    const fragments = ragResults.slice(0, 3).map((item) => `${item.document_title}: ${item.text}`);
-    return `${orchestratorMessage}\n\n${fragments.join("\n\n")}`;
-  }
-
   private canCallOperator(chat: ChatThread): boolean {
     const sent = this.countUserMessages(chat);
-    return sent > this.settings.operatorCallThresholdMessages;
+    return sent > this.operatorCallThresholdMessages;
   }
 
   async sendUserMessage(
@@ -640,6 +655,11 @@ export class WebService {
       throw new WebServiceError(409, `Chat '${chatId}' is ${chat.status}`);
     }
 
+    const isFirstUserMessage = this.countUserMessages(chat) === 0;
+    if (isFirstUserMessage) {
+      chat.title = this.compactWords(text, 4) || chat.title;
+    }
+
     this.addMessage(chat, "registered_user", session.userId, text);
 
     let response: OrchestratorUserResponse;
@@ -650,6 +670,7 @@ export class WebService {
         sender_role: "registered_user",
         text,
         request_operator: chat.escalatedToOperator,
+        top_k: this.ragTopK,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Chat Orchestrator request failed";
@@ -669,8 +690,7 @@ export class WebService {
       chat.escalatedToOperator = true;
     }
 
-    const replyText = this.formatRagReply(response.message, response.rag_results);
-    this.addMessage(chat, response.route === "rag_engine" ? "assistant" : "system", "orchestrator", replyText);
+    this.addMessage(chat, response.route === "rag_engine" ? "assistant" : "system", "orchestrator", response.message);
 
     return {
       summary: this.toSummary(chat),
@@ -698,7 +718,7 @@ export class WebService {
     if (!this.canCallOperator(chat)) {
       throw new WebServiceError(
         400,
-        `Operator request becomes available after ${this.settings.operatorCallThresholdMessages + 1} messages`,
+        `Operator request becomes available after ${this.operatorCallThresholdMessages + 1} messages`,
       );
     }
 
@@ -713,7 +733,6 @@ export class WebService {
 
     chat.escalatedToOperator = true;
     chat.status = response.chat_status;
-    this.addMessage(chat, "system", "orchestrator", response.message);
 
     return {
       summary: this.toSummary(chat),
@@ -935,6 +954,33 @@ export class WebService {
     return [...this.accounts.values()].sort((a, b) => (a.login > b.login ? 1 : -1));
   }
 
+  async getAppSettings(sessionId: string | undefined): Promise<AppSettingsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage app settings");
+    }
+    return { operator_call_threshold_messages: this.operatorCallThresholdMessages };
+  }
+
+  async updateAppSettings(
+    sessionId: string | undefined,
+    operatorCallThresholdMessages: number,
+  ): Promise<AppSettingsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage app settings");
+    }
+    if (
+      !Number.isInteger(operatorCallThresholdMessages) ||
+      operatorCallThresholdMessages < 0 ||
+      operatorCallThresholdMessages > 100
+    ) {
+      throw new WebServiceError(422, "operator_call_threshold_messages must be an integer in range [0, 100]");
+    }
+    this.operatorCallThresholdMessages = operatorCallThresholdMessages;
+    return { operator_call_threshold_messages: this.operatorCallThresholdMessages };
+  }
+
   async listRuntimeModels(sessionId: string | undefined): Promise<RuntimeModelsPayload> {
     const { session } = await this.requireSession(sessionId);
     if (session.role !== "admin") {
@@ -975,6 +1021,27 @@ export class WebService {
     }
     return this.callLlmRuntimeAdmin<RuntimeModelsPayload>("/models/activate", session.accessToken, "POST", {
       model_name: modelName,
+    });
+  }
+
+  async getRuntimeSettings(sessionId: string | undefined): Promise<RuntimeSettingsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage LLM Runtime settings");
+    }
+    return this.callLlmRuntimeAdmin<RuntimeSettingsPayload>("/settings", session.accessToken, "GET");
+  }
+
+  async updateRuntimeSettings(
+    sessionId: string | undefined,
+    systemPrompt: string,
+  ): Promise<RuntimeSettingsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage LLM Runtime settings");
+    }
+    return this.callLlmRuntimeAdmin<RuntimeSettingsPayload>("/settings", session.accessToken, "POST", {
+      system_prompt: systemPrompt,
     });
   }
 
@@ -1020,6 +1087,38 @@ export class WebService {
     return this.callRagAdmin<EmbeddingModelsPayload>("/embedding-models/activate", session.accessToken, "POST", {
       model_name: modelName,
     });
+  }
+
+  async getRagSettings(sessionId: string | undefined): Promise<RagSettingsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG settings");
+    }
+    const payload = await this.callRagAdmin<RagSettingsPayload>("/settings", session.accessToken, "GET");
+    return { ...payload, top_k: this.ragTopK };
+  }
+
+  async updateRagSettings(
+    sessionId: string | undefined,
+    chunkSizeChars: number,
+    chunkOverlapChars: number,
+    topK?: number,
+  ): Promise<RagSettingsPayload> {
+    const { session } = await this.requireSession(sessionId);
+    if (session.role !== "admin") {
+      throw new WebServiceError(403, "Only admins can manage RAG settings");
+    }
+    if (topK !== undefined) {
+      if (!Number.isInteger(topK) || topK < 1 || topK > 50) {
+        throw new WebServiceError(422, "top_k must be an integer in range [1, 50]");
+      }
+      this.ragTopK = topK;
+    }
+    const payload = await this.callRagAdmin<RagSettingsPayload>("/settings", session.accessToken, "POST", {
+      chunk_size_chars: chunkSizeChars,
+      chunk_overlap_chars: chunkOverlapChars,
+    });
+    return { ...payload, top_k: this.ragTopK };
   }
 
   async listKnowledgeBases(sessionId: string | undefined): Promise<KnowledgeBasePayload[]> {

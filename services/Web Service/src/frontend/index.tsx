@@ -93,6 +93,14 @@ interface RuntimeModelsPayload {
   download: RuntimeDownloadStatus;
 }
 
+interface RuntimeSettingsPayload {
+  system_prompt: string;
+}
+
+interface AppSettingsPayload {
+  operator_call_threshold_messages: number;
+}
+
 interface EmbeddingDownloadStatus {
   status: string;
   model_name: string | null;
@@ -125,6 +133,12 @@ interface EmbeddingModelsPayload {
   device_warning?: string | null;
   models: EmbeddingModelInfo[];
   download: EmbeddingDownloadStatus;
+}
+
+interface RagSettingsPayload {
+  chunk_size_chars: number;
+  chunk_overlap_chars: number;
+  top_k?: number;
 }
 
 interface KnowledgeBaseRecord {
@@ -189,6 +203,10 @@ function friendlyRole(role: Role): string {
   return "Admin";
 }
 
+function compactWords(text: string, maxWords: number): string {
+  return text.trim().split(/\s+/).filter(Boolean).slice(0, maxWords).join(" ");
+}
+
 function App(): JSX.Element {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -202,6 +220,7 @@ function App(): JSX.Element {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageText, setMessageText] = useState("");
+  const [chatActivity, setChatActivity] = useState<{ chatId: string; label: string } | null>(null);
 
   const [ragQuery, setRagQuery] = useState("");
   const [ragResults, setRagResults] = useState<RagResult[]>([]);
@@ -211,11 +230,13 @@ function App(): JSX.Element {
 
   const [knowledgeRequests, setKnowledgeRequests] = useState<KnowledgeRequest[]>([]);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
+  const [operatorThresholdSetting, setOperatorThresholdSetting] = useState("5");
   const [runtimeModels, setRuntimeModels] = useState<RuntimeModelInfo[]>([]);
   const [activeRuntimeModel, setActiveRuntimeModel] = useState<string>("");
   const [runtimeDevice, setRuntimeDevice] = useState<string>("auto");
   const [runtimeDeviceWarning, setRuntimeDeviceWarning] = useState<string | null>(null);
   const [runtimeDownload, setRuntimeDownload] = useState<RuntimeDownloadStatus | null>(null);
+  const [llmSystemPrompt, setLlmSystemPrompt] = useState("");
   const [huggingfaceUrl, setHuggingfaceUrl] = useState("");
   const [huggingfaceToken, setHuggingfaceToken] = useState("");
   const [runtimeModelName, setRuntimeModelName] = useState("");
@@ -224,6 +245,9 @@ function App(): JSX.Element {
   const [embeddingDevice, setEmbeddingDevice] = useState<string>("cpu");
   const [embeddingDeviceWarning, setEmbeddingDeviceWarning] = useState<string | null>(null);
   const [embeddingDownload, setEmbeddingDownload] = useState<EmbeddingDownloadStatus | null>(null);
+  const [ragChunkSize, setRagChunkSize] = useState("1200");
+  const [ragChunkOverlap, setRagChunkOverlap] = useState("160");
+  const [ragTopK, setRagTopK] = useState("3");
   const [embeddingHuggingfaceUrl, setEmbeddingHuggingfaceUrl] = useState("");
   const [embeddingModelName, setEmbeddingModelName] = useState("");
   const [embeddingToken, setEmbeddingToken] = useState("");
@@ -233,7 +257,6 @@ function App(): JSX.Element {
   const [knowledgeBaseName, setKnowledgeBaseName] = useState("");
   const [knowledgeBaseDescription, setKnowledgeBaseDescription] = useState("");
   const [knowledgeDocTitle, setKnowledgeDocTitle] = useState("");
-  const [knowledgeDocSource, setKnowledgeDocSource] = useState("");
   const [knowledgeDocText, setKnowledgeDocText] = useState("");
   const [deleteKnowledgePassword, setDeleteKnowledgePassword] = useState("");
 
@@ -286,7 +309,18 @@ function App(): JSX.Element {
   const loadMessages = async (chatId: string): Promise<void> => {
     try {
       const payload = await api<{ messages: ChatMessage[] }>(`/api/chats/${chatId}/messages`);
-      setMessages(payload.messages);
+      setMessages((current) => {
+        const localOnly = current.filter(
+          (message) =>
+            message.chatId === chatId &&
+            (message.messageId.startsWith("pending-") || message.messageId.startsWith("error-")),
+        );
+        if (localOnly.length === 0) {
+          return payload.messages;
+        }
+        const serverIds = new Set(payload.messages.map((message) => message.messageId));
+        return [...payload.messages, ...localOnly.filter((message) => !serverIds.has(message.messageId))];
+      });
     } catch (error) {
       setErrorNotice((error as Error).message);
     }
@@ -296,58 +330,74 @@ function App(): JSX.Element {
     if (!profile || profile.role !== "admin") {
       setKnowledgeRequests([]);
       setAccounts([]);
+      setOperatorThresholdSetting("5");
       setRuntimeModels([]);
       setActiveRuntimeModel("");
       setRuntimeDevice("auto");
       setRuntimeDeviceWarning(null);
       setRuntimeDownload(null);
+      setLlmSystemPrompt("");
       setEmbeddingModels([]);
       setActiveEmbeddingModel("");
       setEmbeddingDevice("cpu");
       setEmbeddingDeviceWarning(null);
       setEmbeddingDownload(null);
+      setRagChunkSize("1200");
+      setRagChunkOverlap("160");
+      setRagTopK("3");
       setKnowledgeBases([]);
       setKnowledgeDocuments([]);
       return;
     }
 
     try {
-      const [requestsPayload, accountsPayload] = await Promise.all([
+      const [requestsPayload, accountsPayload, appSettingsPayload] = await Promise.all([
         api<{ requests: KnowledgeRequest[] }>("/api/admin/knowledge-requests"),
         api<{ accounts: AccountRecord[] }>("/api/admin/accounts"),
+        api<AppSettingsPayload>("/api/admin/app/settings"),
       ]);
       setKnowledgeRequests(requestsPayload.requests);
       setAccounts(accountsPayload.accounts);
+      setOperatorThresholdSetting(String(appSettingsPayload.operator_call_threshold_messages));
     } catch (error) {
       setErrorNotice((error as Error).message);
     }
 
     try {
-      const runtimePayload = await api<RuntimeModelsPayload>("/api/admin/llm/models");
+      const [runtimePayload, runtimeSettingsPayload] = await Promise.all([
+        api<RuntimeModelsPayload>("/api/admin/llm/models"),
+        api<RuntimeSettingsPayload>("/api/admin/llm/settings"),
+      ]);
       setRuntimeModels(runtimePayload.models);
       setActiveRuntimeModel(runtimePayload.active_model);
       setRuntimeDevice(runtimePayload.device ?? "auto");
       setRuntimeDeviceWarning(runtimePayload.device_warning ?? null);
       setRuntimeDownload(runtimePayload.download);
+      setLlmSystemPrompt(runtimeSettingsPayload.system_prompt);
     } catch (error) {
       setRuntimeModels([]);
       setActiveRuntimeModel("");
       setRuntimeDevice("auto");
       setRuntimeDeviceWarning(null);
       setRuntimeDownload(null);
+      setLlmSystemPrompt("");
       setErrorNotice((error as Error).message);
     }
 
     try {
-      const [embeddingPayload, basesPayload] = await Promise.all([
+      const [embeddingPayload, basesPayload, ragSettingsPayload] = await Promise.all([
         api<EmbeddingModelsPayload>("/api/admin/rag/embedding-models"),
         api<{ bases: KnowledgeBaseRecord[] }>("/api/admin/rag/knowledge-bases"),
+        api<RagSettingsPayload>("/api/admin/rag/settings"),
       ]);
       setEmbeddingModels(embeddingPayload.models);
       setActiveEmbeddingModel(embeddingPayload.active_model ?? "");
       setEmbeddingDevice(embeddingPayload.device ?? "cpu");
       setEmbeddingDeviceWarning(embeddingPayload.device_warning ?? null);
       setEmbeddingDownload(embeddingPayload.download);
+      setRagChunkSize(String(ragSettingsPayload.chunk_size_chars));
+      setRagChunkOverlap(String(ragSettingsPayload.chunk_overlap_chars));
+      setRagTopK(String(ragSettingsPayload.top_k ?? 3));
       setKnowledgeBases(basesPayload.bases);
       const activeBase = basesPayload.bases.find((item) => item.is_active) ?? basesPayload.bases[0] ?? null;
       setSelectedKnowledgeBaseId(activeBase?.id ?? null);
@@ -365,6 +415,9 @@ function App(): JSX.Element {
       setEmbeddingDevice("cpu");
       setEmbeddingDeviceWarning(null);
       setEmbeddingDownload(null);
+      setRagChunkSize("1200");
+      setRagChunkOverlap("160");
+      setRagTopK("3");
       setKnowledgeBases([]);
       setKnowledgeDocuments([]);
       setErrorNotice((error as Error).message);
@@ -557,7 +610,20 @@ function App(): JSX.Element {
           }
           return [...current, pendingMessage];
         });
+        setChats((current) =>
+          current.map((chat) =>
+            chat.chatId === chatId
+              ? {
+                  ...chat,
+                  title: chat.userMessageCount === 0 ? compactWords(textToSend, 4) || chat.title : chat.title,
+                  preview: compactWords(textToSend, 18),
+                  userMessageCount: chat.userMessageCount + 1,
+                }
+              : chat,
+          ),
+        );
         setMessageText("");
+        setChatActivity({ chatId, label: "RAG is thinking" });
         setNotice("Waiting for assistant response");
 
         const payload = await api<{ messages: ChatMessage[]; orchestratorMessage: string }>(
@@ -568,13 +634,16 @@ function App(): JSX.Element {
           },
         );
         setMessages(payload.messages);
-        setNotice(payload.orchestratorMessage || "Message sent");
+        setChatActivity(null);
+        setNotice("Message sent");
       } else if (profile.role === "operator") {
+        setChatActivity({ chatId, label: "Operator is sending" });
         const payload = await api<{ messages: ChatMessage[] }>(`/api/chats/${chatId}/operator-reply`, {
           method: "POST",
           body: JSON.stringify({ text: textToSend }),
         });
         setMessages(payload.messages);
+        setChatActivity(null);
         setNotice("Operator response sent");
         setMessageText("");
       } else {
@@ -584,6 +653,7 @@ function App(): JSX.Element {
 
       await loadChats();
     } catch (error) {
+      setChatActivity(null);
       if (profile.role === "registered_user") {
         setMessages((current) => [
           ...current,
@@ -596,8 +666,9 @@ function App(): JSX.Element {
             createdAt: new Date().toISOString(),
           },
         ]);
+      } else {
+        setErrorNotice((error as Error).message);
       }
-      setErrorNotice((error as Error).message);
     }
   };
 
@@ -610,15 +681,28 @@ function App(): JSX.Element {
     clearNotice();
 
     try {
+      setChatActivity({ chatId: selectedChatId, label: "Calling operator" });
       const payload = await api<{ messages: ChatMessage[] }>(`/api/chats/${selectedChatId}/call-operator`, {
         method: "POST",
-        body: JSON.stringify({ note: "Please connect me with operator" }),
+        body: JSON.stringify({}),
       });
       setMessages(payload.messages);
+      setChatActivity(null);
       await loadChats();
       setNotice("Operator call has been sent");
     } catch (error) {
-      setErrorNotice((error as Error).message);
+      setChatActivity(null);
+      setMessages((current) => [
+        ...current,
+        {
+          messageId: `error-${Date.now()}`,
+          chatId: selectedChatId,
+          senderRole: "system",
+          senderId: "web-service",
+          text: `Operator call failed: ${(error as Error).message}`,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
     }
   };
 
@@ -673,9 +757,10 @@ function App(): JSX.Element {
     clearNotice();
 
     try {
+      const topK = Number(ragTopK);
       const payload = await api<{ results: RagResult[] }>("/api/rag/search", {
         method: "POST",
-        body: JSON.stringify({ query: ragQuery, top_k: 3 }),
+        body: JSON.stringify({ query: ragQuery, top_k: Number.isInteger(topK) ? topK : 3 }),
       });
       setRagResults(payload.results);
     } catch (error) {
@@ -759,6 +844,31 @@ function App(): JSX.Element {
     }
   };
 
+  const saveOperatorThreshold = async (): Promise<void> => {
+    if (!profile || profile.role !== "admin") {
+      setErrorNotice("Only admin can update app settings");
+      return;
+    }
+    const threshold = Number(operatorThresholdSetting);
+    if (!Number.isInteger(threshold) || threshold < 0 || threshold > 100) {
+      setErrorNotice("Operator threshold must be an integer in range [0, 100]");
+      return;
+    }
+
+    clearNotice();
+    try {
+      const payload = await api<AppSettingsPayload>("/api/admin/app/settings", {
+        method: "POST",
+        body: JSON.stringify({ operator_call_threshold_messages: threshold }),
+      });
+      setOperatorThresholdSetting(String(payload.operator_call_threshold_messages));
+      setNotice("Operator threshold updated");
+      setNoticeError(false);
+    } catch (error) {
+      setErrorNotice((error as Error).message);
+    }
+  };
+
   const loadLlmDownloadStatus = async (): Promise<void> => {
     if (!profile || profile.role !== "admin") {
       return;
@@ -817,6 +927,30 @@ function App(): JSX.Element {
       setRuntimeDeviceWarning(payload.device_warning ?? null);
       setRuntimeDownload(payload.download);
       setNotice(`Active LLM model switched to '${payload.active_model}'`);
+      setNoticeError(false);
+    } catch (error) {
+      setErrorNotice((error as Error).message);
+    }
+  };
+
+  const saveLlmSystemPrompt = async (): Promise<void> => {
+    if (!profile || profile.role !== "admin") {
+      setErrorNotice("Only admin can update LLM settings");
+      return;
+    }
+    if (!llmSystemPrompt.trim()) {
+      setErrorNotice("System prompt cannot be empty");
+      return;
+    }
+
+    clearNotice();
+    try {
+      const payload = await api<RuntimeSettingsPayload>("/api/admin/llm/settings", {
+        method: "POST",
+        body: JSON.stringify({ system_prompt: llmSystemPrompt }),
+      });
+      setLlmSystemPrompt(payload.system_prompt);
+      setNotice("LLM system prompt updated");
       setNoticeError(false);
     } catch (error) {
       setErrorNotice((error as Error).message);
@@ -882,6 +1016,51 @@ function App(): JSX.Element {
     }
   };
 
+  const saveRagSettings = async (): Promise<void> => {
+    if (!profile || profile.role !== "admin") {
+      setErrorNotice("Only admin can update RAG settings");
+      return;
+    }
+    const chunkSize = Number(ragChunkSize);
+    const chunkOverlap = Number(ragChunkOverlap);
+    const topK = Number(ragTopK);
+    if (!Number.isInteger(chunkSize) || chunkSize < 200 || chunkSize > 8000) {
+      setErrorNotice("Chunk size must be an integer in range [200, 8000]");
+      return;
+    }
+    if (!Number.isInteger(chunkOverlap) || chunkOverlap < 0 || chunkOverlap > 2000) {
+      setErrorNotice("Chunk overlap must be an integer in range [0, 2000]");
+      return;
+    }
+    if (chunkOverlap >= chunkSize) {
+      setErrorNotice("Chunk overlap must be smaller than chunk size");
+      return;
+    }
+    if (!Number.isInteger(topK) || topK < 1 || topK > 50) {
+      setErrorNotice("Top-K must be an integer in range [1, 50]");
+      return;
+    }
+
+    clearNotice();
+    try {
+      const payload = await api<RagSettingsPayload>("/api/admin/rag/settings", {
+        method: "POST",
+        body: JSON.stringify({
+          chunk_size_chars: chunkSize,
+          chunk_overlap_chars: chunkOverlap,
+          top_k: topK,
+        }),
+      });
+      setRagChunkSize(String(payload.chunk_size_chars));
+      setRagChunkOverlap(String(payload.chunk_overlap_chars));
+      setRagTopK(String(payload.top_k ?? topK));
+      setNotice("RAG chunk settings updated");
+      setNoticeError(false);
+    } catch (error) {
+      setErrorNotice((error as Error).message);
+    }
+  };
+
   const loadKnowledgeDocuments = async (knowledgeBaseId: number): Promise<void> => {
     try {
       const payload = await api<{ documents: KnowledgeDocumentRecord[] }>(
@@ -898,8 +1077,8 @@ function App(): JSX.Element {
       setErrorNotice("Knowledge base name cannot be empty");
       return;
     }
-    if (!knowledgeDocTitle.trim() || !knowledgeDocText.trim()) {
-      setErrorNotice("First document title and text are required");
+    if (!knowledgeDocText.trim()) {
+      setErrorNotice("Document text is required");
       return;
     }
 
@@ -912,8 +1091,7 @@ function App(): JSX.Element {
           description: knowledgeBaseDescription || null,
           documents: [
             {
-              title: knowledgeDocTitle,
-              source: knowledgeDocSource || null,
+              title: knowledgeDocTitle.trim() || "Untitled document",
               text: knowledgeDocText,
             },
           ],
@@ -923,7 +1101,6 @@ function App(): JSX.Element {
       setKnowledgeBaseName("");
       setKnowledgeBaseDescription("");
       setKnowledgeDocTitle("");
-      setKnowledgeDocSource("");
       setKnowledgeDocText("");
       await loadAdminData();
       setNotice(`Knowledge base '${base.name}' created`);
@@ -938,8 +1115,8 @@ function App(): JSX.Element {
       setErrorNotice("Select a knowledge base first");
       return;
     }
-    if (!knowledgeDocTitle.trim() || !knowledgeDocText.trim()) {
-      setErrorNotice("Document title and text are required");
+    if (!knowledgeDocText.trim()) {
+      setErrorNotice("Document text is required");
       return;
     }
 
@@ -948,13 +1125,11 @@ function App(): JSX.Element {
       await api<KnowledgeDocumentRecord>(`/api/admin/rag/knowledge-bases/${selectedKnowledgeBaseId}/documents`, {
         method: "POST",
         body: JSON.stringify({
-          title: knowledgeDocTitle,
-          source: knowledgeDocSource || null,
+          title: knowledgeDocTitle.trim() || "Untitled document",
           text: knowledgeDocText,
         }),
       });
       setKnowledgeDocTitle("");
-      setKnowledgeDocSource("");
       setKnowledgeDocText("");
       await loadAdminData();
       setNotice("Document added to knowledge base");
@@ -1181,7 +1356,29 @@ function App(): JSX.Element {
               {message.text}
             </div>
           ))}
-          {messages.length === 0 && <div className="muted">No messages in current chat</div>}
+          {chatActivity?.chatId === selectedChatId && (
+            <div className="msg assistant typing-msg">
+              <span>{chatActivity.label}</span>
+              <span className="typing-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          )}
+          {!chatActivity && selectedChat?.status === "waiting_operator" && (
+            <div className="msg system typing-msg">
+              <span>Waiting for operator</span>
+              <span className="typing-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          )}
+          {messages.length === 0 && chatActivity?.chatId !== selectedChatId && (
+            <div className="muted">No messages in current chat</div>
+          )}
         </section>
 
         <footer>
@@ -1324,6 +1521,19 @@ function App(): JSX.Element {
 
             <div className="card">
               <h3>Account Control</h3>
+              <div className="action-row" style={{ marginBottom: 12 }}>
+                <input
+                  value={operatorThresholdSetting}
+                  onChange={(event) => setOperatorThresholdSetting(event.target.value)}
+                  placeholder="Operator call threshold"
+                  type="number"
+                  min={0}
+                  max={100}
+                />
+                <button className="btn-ghost" onClick={() => void saveOperatorThreshold()}>
+                  Save Threshold
+                </button>
+              </div>
               <div style={{ display: "grid", gap: 8 }}>
                 {accounts.map((account) => (
                   <div key={account.userId} className="card">
@@ -1357,6 +1567,17 @@ function App(): JSX.Element {
                 <code>.pt</code>, <code>.pth</code>, <code>.onnx</code>, <code>.ggml</code>. Активировать в Ollama
                 можно только <code>.gguf</code>, остальные сохраняются как download-only.
               </p>
+              <textarea
+                value={llmSystemPrompt}
+                onChange={(event) => setLlmSystemPrompt(event.target.value)}
+                placeholder="LLM system prompt for generated answers"
+                rows={5}
+              />
+              <div className="action-row" style={{ marginTop: 8 }}>
+                <button className="btn-ghost" onClick={() => void saveLlmSystemPrompt()}>
+                  Save System Prompt
+                </button>
+              </div>
               <input
                 value={huggingfaceUrl}
                 onChange={(event) => setHuggingfaceUrl(event.target.value)}
@@ -1511,6 +1732,36 @@ function App(): JSX.Element {
             <div className="card">
               <h3>RAG Knowledge Bases</h3>
               <div className="action-row">
+                <input
+                  value={ragChunkSize}
+                  onChange={(event) => setRagChunkSize(event.target.value)}
+                  placeholder="Chunk window chars"
+                  type="number"
+                  min={200}
+                  max={8000}
+                />
+                <input
+                  value={ragChunkOverlap}
+                  onChange={(event) => setRagChunkOverlap(event.target.value)}
+                  placeholder="Chunk overlap chars"
+                  type="number"
+                  min={0}
+                  max={2000}
+                />
+                <input
+                  value={ragTopK}
+                  onChange={(event) => setRagTopK(event.target.value)}
+                  placeholder="Top-K chunks"
+                  type="number"
+                  min={1}
+                  max={50}
+                />
+                <button className="btn-ghost" onClick={() => void saveRagSettings()}>
+                  Save RAG Settings
+                </button>
+              </div>
+
+              <div className="action-row">
                 <select
                   value={selectedKnowledgeBaseId ?? ""}
                   onChange={(event) => setSelectedKnowledgeBaseId(event.target.value ? Number(event.target.value) : null)}
@@ -1532,7 +1783,7 @@ function App(): JSX.Element {
                 </button>
               </div>
 
-              <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+              <div className="kb-list">
                 {knowledgeBases.map((base) => (
                   <div key={base.id} className="card">
                     <p>
@@ -1548,41 +1799,40 @@ function App(): JSX.Element {
                 {knowledgeBases.length === 0 && <p className="muted">No knowledge bases yet</p>}
               </div>
 
-              <div style={{ marginTop: 12 }}>
-                <input
-                  value={knowledgeBaseName}
-                  onChange={(event) => setKnowledgeBaseName(event.target.value)}
-                  placeholder="New knowledge base name"
-                />
-                <input
-                  value={knowledgeBaseDescription}
-                  onChange={(event) => setKnowledgeBaseDescription(event.target.value)}
-                  placeholder="Description (optional)"
-                />
-              </div>
+              <details className="admin-foldout">
+                <summary>Create new base</summary>
+                <div className="foldout-body">
+                  <input
+                    value={knowledgeBaseName}
+                    onChange={(event) => setKnowledgeBaseName(event.target.value)}
+                    placeholder="New knowledge base name"
+                  />
+                  <input
+                    value={knowledgeBaseDescription}
+                    onChange={(event) => setKnowledgeBaseDescription(event.target.value)}
+                    placeholder="Description (optional)"
+                  />
+                  <button className="btn-primary" onClick={() => void createKnowledgeBase()}>
+                    Create Base Using Document Below
+                  </button>
+                </div>
+              </details>
 
-              <div style={{ marginTop: 12 }}>
+              <div className="document-form">
+                <h4>Add Document</h4>
                 <input
                   value={knowledgeDocTitle}
                   onChange={(event) => setKnowledgeDocTitle(event.target.value)}
-                  placeholder="Document title"
-                />
-                <input
-                  value={knowledgeDocSource}
-                  onChange={(event) => setKnowledgeDocSource(event.target.value)}
-                  placeholder="Document source (optional)"
+                  placeholder="Document title (optional)"
                 />
                 <textarea
                   value={knowledgeDocText}
                   onChange={(event) => setKnowledgeDocText(event.target.value)}
                   placeholder="Document JSON/text content for indexing"
-                  rows={5}
+                  rows={8}
                 />
                 <div className="action-row">
-                  <button className="btn-primary" onClick={() => void createKnowledgeBase()}>
-                    Create Base With Document
-                  </button>
-                  <button className="btn-ghost" disabled={!selectedKnowledgeBaseId} onClick={() => void addKnowledgeDocument()}>
+                  <button className="btn-primary" disabled={!selectedKnowledgeBaseId} onClick={() => void addKnowledgeDocument()}>
                     Add Document
                   </button>
                 </div>

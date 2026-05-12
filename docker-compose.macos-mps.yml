@@ -1,4 +1,19 @@
 services:
+  ollama:
+    profiles:
+      - docker-ollama
+
+  llm-runtime:
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      LLM_DEVICE: mps
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+        required: false
+
   postgres:
     ports:
       - "5432:5432"
